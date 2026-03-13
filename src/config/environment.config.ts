@@ -28,6 +28,13 @@ const EnvironmentSchema = z.object({
   LOG_LEVEL: z
     .enum(['error', 'warn', 'info', 'debug'])
     .default('info'),
+
+  // AWS S3 (optional – for provider document uploads)
+  AWS_REGION: z.string().optional(),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_BUCKET: z.string().optional(),
+  S3_PUBLIC_BASE_URL: z.string().url().optional(),
 });
 
 export type EnvironmentConfig = z.infer<typeof EnvironmentSchema>;

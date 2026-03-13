@@ -1,12 +1,14 @@
 import { Response, NextFunction } from 'express';
-import { ResponseService, ResponseCode } from '../core/response-management';
+import { ResponseService } from '../core/response-management';
 import { AuthErrorMessages } from '../core/messages';
 import { RequestWithUser } from '../interface/auth.interface';
-import { AuthService } from '../services/user/auth.service';
+import type { JwtPayload } from '../interface/auth.interface';
+
+export type AuthTokenVerifier = (token: string) => JwtPayload | null;
 
 const responseService = new ResponseService();
 
-export function createAuthMiddleware(authService: AuthService) {
+export function createAuthMiddleware(authService: { verifyToken: AuthTokenVerifier }) {
   return function authMiddleware(
     req: RequestWithUser,
     res: Response,

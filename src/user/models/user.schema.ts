@@ -1,6 +1,6 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export const UserRole = ['user', 'provider'] as const;
+export const UserRole = ['user', 'provider', 'admin'] as const;
 export type UserRoleType = (typeof UserRole)[number];
 
 export const Gender = ['Male', 'Female', 'Other'] as const;
@@ -48,10 +48,6 @@ const userSchema = new Schema<IUser>(
   { timestamps: true }
 );
 
-userSchema.index({ mobileNumber: 1 }, { unique: true });
-userSchema.index({ email: 1 }, { unique: true, sparse: true });
 userSchema.index({ role: 1 });
-userSchema.index({ googleId: 1 }, { unique: true, sparse: true });
-userSchema.index({ appleId: 1 }, { unique: true, sparse: true });
 
 export const UserModel = mongoose.model<IUser>('User', userSchema);

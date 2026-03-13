@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { AuthController } from '../controllers/user/auth.controller';
-import { AuthService } from '../services/user/auth.service';
-import { createAuthMiddleware } from '../middlewares/auth.middleware';
-import { AuthEndPoints } from '../enums/auth.enum';
+import { AuthController } from '../controllers/auth.controller';
+import { AuthService } from '../services/auth.service';
+import { createAuthMiddleware } from '../../middlewares/auth.middleware';
+import { AuthEndPoints } from '../../enums/auth.enum';
 
-export function createAuthRoutes(config: {
+export function createUserAuthRoutes(config: {
   jwtSecret: string;
   jwtExpiresIn: string;
   bcryptRounds: number;

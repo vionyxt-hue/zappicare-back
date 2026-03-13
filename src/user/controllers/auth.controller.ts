@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { ZodError } from 'zod';
-import { AuthService } from '../../services/user/auth.service';
+import { AuthService } from '../services/auth.service';
 import { ResponseService, ResponseCode } from '../../core/response-management';
 import {
   SendOtpSchema,
@@ -15,7 +15,7 @@ import {
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
-} from '../../models/user/auth.dto';
+} from '../models/auth.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 
 const responseService = new ResponseService();

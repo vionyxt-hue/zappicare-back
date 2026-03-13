@@ -2,7 +2,9 @@ import express, { Express, Request, Response } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
-import { createAuthRoutes } from './routes/auth.routes';
+import { createUserAuthRoutes } from './user/routes/auth.routes';
+import { createProviderRoutes } from './providers/routes';
+import { createAdminRoutes } from './admin/routes';
 import { ResponseService, ResponseCode } from './core/response-management';
 import { swaggerDocument } from './config/swagger.config';
 
@@ -24,13 +26,26 @@ export function createApp(config: {
 
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
-  app.use('/auth', createAuthRoutes({
+  // User module: auth, profile, etc.
+  app.use('/auth', createUserAuthRoutes({
     jwtSecret: config.jwtSecret,
     jwtExpiresIn: config.jwtExpiresIn,
     bcryptRounds: config.bcryptRounds,
     googleClientId: config.googleClientId,
     appleClientId: config.appleClientId,
   }));
+
+  // Providers module: verification (OTP, register as provider) + onboarding
+  app.use('/providers', createProviderRoutes({
+    jwtSecret: config.jwtSecret,
+    jwtExpiresIn: config.jwtExpiresIn,
+    bcryptRounds: config.bcryptRounds,
+    googleClientId: config.googleClientId,
+    appleClientId: config.appleClientId,
+  }));
+
+  // Admin module
+  app.use('/admin', createAdminRoutes());
 
   app.get('/health', (_req: Request, res: Response) => {
     res.status(200).json(

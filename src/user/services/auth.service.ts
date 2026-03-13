@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
-import { UserModel, IUser } from '../../models/user/user.schema';
-import { OtpVerificationModel } from '../../models/user/otp-verification.schema';
+import { UserModel, IUser } from '../models/user.schema';
+import { OtpVerificationModel } from '../models/otp-verification.schema';
 import { ResponseService, ResponseCode } from '../../core/response-management';
 import { AuthErrorMessages, AuthSuccessMessages } from '../../core/messages';
 import {
@@ -12,12 +12,13 @@ import {
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
-} from '../../models/user/auth.dto';
+} from '../models/auth.dto';
 import { JwtPayload } from '../../interface/auth.interface';
 import {
   verifyGoogleIdToken,
   verifyAppleIdentityToken,
 } from './oauth-verifier';
+import type { UserRoleType } from '../models/user.schema';
 
 const OTP_EXPIRY_MINUTES = 5;
 const OTP_LENGTH = 5;
@@ -327,7 +328,7 @@ export class AuthService {
       [idField]: providerId,
       termsAndConditionsAccepted: true,
       isMobileVerified: false,
-      role: role as 'user' | 'provider',
+      role: role as UserRoleType,
     });
     const token = this.generateToken(newUser as UserLike);
     return this.responseService.success(
