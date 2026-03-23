@@ -11,11 +11,12 @@ const logger = new LoggerService('BOOTSTRAP');
 
 async function bootstrap(): Promise<void> {
   const db = DatabaseConnection.getInstance();
-  await db.connect(config.MONGODB_URI);
+  await db.connect();
 
   const app = createApp({
     jwtSecret: config.JWT_SECRET,
     jwtExpiresIn: config.JWT_EXPIRES_IN,
+    jwtRefreshExpiresIn: config.JWT_REFRESH_EXPIRES_IN,
     bcryptRounds: config.BCRYPT_ROUNDS,
     corsOrigin: config.CORS_ORIGIN,
     googleClientId: config.GOOGLE_CLIENT_ID,

@@ -11,6 +11,7 @@ import { swaggerDocument } from './config/swagger.config';
 export function createApp(config: {
   jwtSecret: string;
   jwtExpiresIn: string;
+  jwtRefreshExpiresIn: string;
   bcryptRounds: number;
   corsOrigin: string;
   googleClientId?: string;
@@ -30,6 +31,7 @@ export function createApp(config: {
   app.use('/auth', createUserAuthRoutes({
     jwtSecret: config.jwtSecret,
     jwtExpiresIn: config.jwtExpiresIn,
+    jwtRefreshExpiresIn: config.jwtRefreshExpiresIn,
     bcryptRounds: config.bcryptRounds,
     googleClientId: config.googleClientId,
     appleClientId: config.appleClientId,
@@ -39,6 +41,7 @@ export function createApp(config: {
   app.use('/providers', createProviderRoutes({
     jwtSecret: config.jwtSecret,
     jwtExpiresIn: config.jwtExpiresIn,
+    jwtRefreshExpiresIn: config.jwtRefreshExpiresIn,
     bcryptRounds: config.bcryptRounds,
     googleClientId: config.googleClientId,
     appleClientId: config.appleClientId,

@@ -18,4 +18,7 @@ export enum AuthErrorMessages {
   OAUTH_NOT_CONFIGURED = 'Google or Apple sign-in is not configured',
   INVALID_OAUTH_TOKEN = 'Invalid or expired Google/Apple token',
   TERMS_AND_CONDITIONS_REQUIRED = 'Terms and conditions must be accepted to sign up',
+  OTP_SEND_RATE_LIMITED = 'OTP_SEND_RATE_LIMITED',
+  INVALID_REFRESH_TOKEN = 'Invalid or expired refresh token',
+  ONBOARDING_INCOMPLETE = 'Complete onboarding before using a full session',
 }

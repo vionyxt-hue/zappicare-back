@@ -9,6 +9,7 @@ import { AuthService } from '../../user/services/auth.service';
 export function createProviderVerificationRoutes(config: {
   jwtSecret: string;
   jwtExpiresIn: string;
+  jwtRefreshExpiresIn: string;
   bcryptRounds: number;
   googleClientId?: string;
   appleClientId?: string;
@@ -22,7 +23,7 @@ export function createProviderVerificationRoutes(config: {
 
   router.post('/register', (req: Request, res: Response) => {
     req.body = { ...req.body, role: 'provider' };
-    authController.register(req, res);
+    void authController.register(req, res);
   });
 
   return router;

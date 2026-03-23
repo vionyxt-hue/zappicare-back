@@ -28,6 +28,7 @@ export class ResponseService {
       [ResponseCode.INVALID_TOKEN]: HttpStatus.UNAUTHORIZED,
       [ResponseCode.NO_DATA_FOUND]: HttpStatus.NOT_FOUND,
       [ResponseCode.ALREADY_EXISTS]: HttpStatus.CONFLICT,
+      [ResponseCode.RATE_LIMITED]: HttpStatus.TOO_MANY_REQUESTS,
     };
     return statusMap[responseCode] ?? HttpStatus.INTERNAL_SERVER_ERROR;
   }
@@ -75,5 +76,16 @@ export class ResponseService {
 
   conflict(message?: string): ErrorResponse {
     return this.error(ResponseCode.CONFLICT_ERROR, message);
+  }
+
+  rateLimited(message?: string, errors?: unknown[]): ErrorResponse {
+    const statusCode = HttpStatus.TOO_MANY_REQUESTS;
+    return {
+      statusCode,
+      responseCode: ResponseCode.RATE_LIMITED,
+      message: message ?? 'Too many requests',
+      data: null,
+      errors,
+    };
   }
 }

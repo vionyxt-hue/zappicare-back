@@ -5,6 +5,7 @@ export enum AuthEndPoints {
   LOGIN = 'login',
   GOOGLE = 'google',
   APPLE = 'apple',
+  REFRESH = 'refresh',
   LOGOUT = 'logout',
   ME = 'me',
 }

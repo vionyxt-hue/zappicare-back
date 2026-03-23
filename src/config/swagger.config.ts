@@ -3,7 +3,8 @@ export const swaggerDocument = {
   openapi: '3.0.3',
   info: {
     title: 'ZappieCare API',
-    description: 'ZappieCare Backend API – Auth (manual, Google, Apple), user registration and login.',
+    description:
+      'ZappieCare Backend API – Auth (OTP, email/password, Google, Apple), registration, refresh tokens, and onboarding (steps 0–4; full access+refresh only when tokenEligible).',
     version: '1.0.0',
   },
   servers: [
@@ -68,6 +69,10 @@ export const swaggerDocument = {
         responses: {
           '200': { description: 'OTP sent', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '429': {
+            description: 'Too many OTP sends (max 5 per 5 minutes per mobile); check errors[0].retryAfterSeconds',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/RateLimitErrorResponse' } } },
+          },
         },
       },
     },
@@ -104,7 +109,10 @@ export const swaggerDocument = {
                     message: { type: 'string' },
                     data: {
                       type: 'object',
-                      properties: { verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' } },
+                      properties: {
+                        verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' },
+                        onboarding: { $ref: '#/components/schemas/OnboardingState' },
+                      },
                     },
                   },
                 },
@@ -119,7 +127,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Register (create account)',
-        description: 'Creates a user after OTP verification. Send x-verified-token header with the token from verify-otp.',
+        description:
+          'Creates a user after OTP verification. Send x-verified-token header with the token from verify-otp. Access+refresh tokens are returned only when onboarding is complete (tokenEligible); otherwise only `user` is returned.',
         parameters: [
           {
             name: 'x-verified-token',
@@ -166,7 +175,7 @@ export const swaggerDocument = {
                       type: 'object',
                       properties: {
                         user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
+                        tokens: { $ref: '#/components/schemas/Tokens', description: 'Present only when tokenEligible' },
                       },
                     },
                   },
@@ -182,7 +191,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Login',
-        description: 'Login with (1) mobileNumber + code (OTP), or (2) mobileNumber + password, or (3) email + password.',
+        description:
+          'Login with (1) mobileNumber + code (OTP), or (2) mobileNumber + password, or (3) email + password. Tokens are omitted until onboarding is complete. Optional body fields for session: fcmToken, devicePlatform, timezone, deviceInfo, locationInfo.',
         requestBody: {
           required: true,
           content: {
@@ -194,6 +204,13 @@ export const swaggerDocument = {
                   email: { type: 'string', format: 'email' },
                   password: { type: 'string' },
                   code: { type: 'string', minLength: 5, maxLength: 5, description: 'OTP when using mobile' },
+                  fcmToken: { type: 'string' },
+                  apnsToken: { type: 'string' },
+                  onesignalPlayerId: { type: 'string' },
+                  devicePlatform: { type: 'string' },
+                  timezone: { type: 'string' },
+                  deviceInfo: { type: 'object' },
+                  locationInfo: { type: 'object' },
                 },
               },
             },
@@ -201,7 +218,7 @@ export const swaggerDocument = {
         },
         responses: {
           '200': {
-            description: 'Login success',
+            description: 'Login success (tokens only if tokenEligible)',
             content: {
               'application/json': {
                 schema: {
@@ -214,7 +231,7 @@ export const swaggerDocument = {
                       type: 'object',
                       properties: {
                         user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
+                        tokens: { $ref: '#/components/schemas/Tokens', description: 'Omitted until onboarding complete' },
                       },
                     },
                   },
@@ -295,11 +312,51 @@ export const swaggerDocument = {
         },
       },
     },
+    '/auth/refresh': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Refresh access token',
+        description:
+          'Exchanges a valid refresh token for new access and refresh tokens. Session row is rotated in `login_activity`.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['refreshToken'],
+                properties: { refreshToken: { type: 'string' } },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'New tokens',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    statusCode: { type: 'integer' },
+                    responseCode: { type: 'string' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/Tokens' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Invalid or expired refresh', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/auth/logout': {
       post: {
         tags: ['Auth'],
         summary: 'Logout',
-        description: 'Logout current session. Requires Bearer token.',
+        description:
+          'Revokes the current session (from access JWT `sid`). Requires Bearer access token.',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': {
@@ -376,6 +433,10 @@ export const swaggerDocument = {
         responses: {
           '200': { description: 'OTP sent', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '429': {
+            description: 'OTP send rate limited',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/RateLimitErrorResponse' } } },
+          },
         },
       },
     },
@@ -412,7 +473,10 @@ export const swaggerDocument = {
                     message: { type: 'string' },
                     data: {
                       type: 'object',
-                      properties: { verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' } },
+                      properties: {
+                        verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' },
+                        onboarding: { $ref: '#/components/schemas/OnboardingState' },
+                      },
                     },
                   },
                 },
@@ -491,7 +555,8 @@ export const swaggerDocument = {
       get: {
         tags: ['Provider Onboarding'],
         summary: 'Get onboarding status',
-        description: 'Returns current onboarding step, verification status, and provider summary. Requires provider Bearer token.',
+        description:
+          'Returns current onboarding step, verification status, and provider summary. Use **accessToken** after onboarding is complete, or **onboardingToken** from register/login while step 4 is not reached (JWT typ=onboarding).',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': {
@@ -861,10 +926,33 @@ export const swaggerDocument = {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        description: 'Access token from login/register/google/apple',
+        description:
+          'For most APIs: access JWT (typ=access) with `sid`. For `/providers/onboarding/*` before step 4: use **onboardingToken** from register/login (typ=onboarding).',
       },
     },
     schemas: {
+      OnboardingState: {
+        type: 'object',
+        description: 'Client stepper / gating (currentStep 0–4; tokenEligible at 4)',
+        properties: {
+          currentStep: { type: 'integer', minimum: 0, maximum: 4 },
+          totalSteps: { type: 'integer', example: 4 },
+          isPhoneVerified: { type: 'boolean' },
+          isProfileCompleted: { type: 'boolean' },
+          isStepperCompleted: { type: 'boolean', description: 'Provider bank/stepper submitted' },
+          tokenEligible: { type: 'boolean' },
+          nextAction: {
+            type: 'string',
+            enum: [
+              'VERIFY_PHONE',
+              'COMPLETE_PROFILE',
+              'COMPLETE_PROVIDER_STEPPER',
+              'VERIFY_PHONE_TO_FINISH',
+              'NONE',
+            ],
+          },
+        },
+      },
       UserResponse: {
         type: 'object',
         properties: {
@@ -873,14 +961,18 @@ export const swaggerDocument = {
           mobileNumber: { type: 'string' },
           firstName: { type: 'string' },
           lastName: { type: 'string' },
-          role: { type: 'string', enum: ['user', 'provider'] },
+          role: { type: 'string', enum: ['user', 'provider', 'admin'] },
+          onboarding: { $ref: '#/components/schemas/OnboardingState' },
         },
       },
       Tokens: {
         type: 'object',
         properties: {
           accessToken: { type: 'string' },
-          expiresIn: { type: 'string', example: '24h' },
+          refreshToken: { type: 'string' },
+          expiresIn: { type: 'string', example: '1h' },
+          refreshExpiresAt: { type: 'string', format: 'date-time' },
+          sessionId: { type: 'string', format: 'uuid', description: 'Same as access JWT claim sid' },
         },
       },
       AuthSuccessResponse: {
@@ -893,7 +985,29 @@ export const swaggerDocument = {
             type: 'object',
             properties: {
               user: { $ref: '#/components/schemas/UserResponse' },
-              tokens: { $ref: '#/components/schemas/Tokens' },
+              tokens: { $ref: '#/components/schemas/Tokens', description: 'Omitted until tokenEligible' },
+              onboardingToken: {
+                type: 'string',
+                description:
+                  'Provider only, before step 4: Bearer for `/providers/onboarding/*` (JWT typ=onboarding). Not a refresh session.',
+              },
+              onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+            },
+          },
+        },
+      },
+      RateLimitErrorResponse: {
+        type: 'object',
+        properties: {
+          statusCode: { type: 'integer', example: 429 },
+          responseCode: { type: 'string', example: 'RATE_LIMITED' },
+          message: { type: 'string', example: 'OTP_SEND_RATE_LIMITED' },
+          data: { type: 'object', nullable: true },
+          errors: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { retryAfterSeconds: { type: 'integer' } },
             },
           },
         },

@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import jwt from 'jsonwebtoken';
 import { createAuthMiddleware } from '../../middlewares/auth.middleware';
-import { JwtPayload } from '../../interface/auth.interface';
+import { verifyProviderRouteJwtToken } from '../../common/verify-access-jwt';
 import { ProviderOnboardingController } from '../controllers/onboarding.controller';
 import { ProviderOnboardingService } from '../services/onboarding.service';
 import { uploadDocumentsMiddleware } from '../middlewares/upload-documents.middleware';
@@ -12,14 +11,7 @@ export function createProviderOnboardingRoutes(config: { jwtSecret: string }): R
   const controller = new ProviderOnboardingController(onboardingService);
 
   const authMiddleware = createAuthMiddleware({
-    verifyToken: (token: string): JwtPayload | null => {
-      try {
-        const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
-        return decoded;
-      } catch {
-        return null;
-      }
-    },
+    verifyToken: (token: string) => verifyProviderRouteJwtToken(token, config.jwtSecret),
   });
 
   router.get('/onboarding/status', authMiddleware, controller.getOnboardingStatus);

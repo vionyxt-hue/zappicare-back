@@ -29,6 +29,8 @@ export function createAuthMiddleware(authService: { verifyToken: AuthTokenVerifi
       id: payload.sub,
       email: payload.email,
       mobileNumber: payload.mobileNumber,
+      sessionId: payload.sid,
+      exp: payload.exp,
     };
     next();
   };
