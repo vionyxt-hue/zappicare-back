@@ -1,7 +1,6 @@
-import { dataTable } from '../db/data-table';
-import type { UserEntity } from '../user/models/user.schema';
-import type { GenderType, UserRoleType } from '../user/models/user.schema';
-import { computeCurrentStep } from '../user/utils/onboarding.util';
+import { dataTable } from '../../../db/data-table';
+import type { UserEntity, GenderType, UserRoleType } from '../entities/user.entity';
+import { computeCurrentStep } from '../../utils/onboarding.util';
 
 function parseDate(v: unknown): Date {
   if (v instanceof Date) return v;
@@ -128,9 +127,6 @@ export async function createUser(data: {
   return mapUserRow(row as Record<string, unknown>);
 }
 
-/**
- * Updates onboarding flags and recomputes `current_step`.
- */
 export async function patchUserOnboarding(
   userId: string,
   patch: Partial<{

@@ -1,10 +1,10 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { AuthController } from '../../user/controllers/auth.controller';
 import { AuthService } from '../../user/services/auth.service';
 
 /**
- * Provider verification: same flow as auth (send-otp → verify-otp → register)
- * but under /providers/verification and register always creates a provider.
+ * Provider verification flow (no separate register step):
+ * send-otp -> verify-otp -> onboarding using onboardingToken/accessToken.
  */
 export function createProviderVerificationRoutes(config: {
   jwtSecret: string;
@@ -19,12 +19,7 @@ export function createProviderVerificationRoutes(config: {
   const authController = new AuthController(authService);
 
   router.post('/send-otp', authController.sendOtp);
-  router.post('/verify-otp', authController.verifyOtp);
-
-  router.post('/register', (req: Request, res: Response) => {
-    req.body = { ...req.body, role: 'provider' };
-    void authController.register(req, res);
-  });
+  router.post('/verify-otp', authController.verifyProviderOtp);
 
   return router;
 }

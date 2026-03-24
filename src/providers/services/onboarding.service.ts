@@ -1,4 +1,8 @@
-import { findUserById, patchUserOnboarding } from '../../repositories/user.repository';
+import {
+  findUserById,
+  patchUserOnboarding,
+  updateUserById,
+} from '../../user/models/queries/user.query';
 import {
   findProviderByUserId,
   findProviderIdByUserId,
@@ -10,9 +14,9 @@ import {
   findPaymentDetailByProviderId,
   findActiveHospitals,
   findActiveSpecializations,
-} from '../../repositories/provider.repository';
+} from '../models/queries/provider.query';
 import { ResponseService, ResponseCode } from '../../core/response-management';
-import type { IProviderDocument } from '../models/provider-document.schema';
+import type { IProviderDocument } from '../models/entities/provider-document.entity';
 import type {
   PersonalInfoDto,
   ProfessionalProfileDto,
@@ -22,7 +26,7 @@ import type {
   AmbulanceProfessionalDetailsDto,
   NurseProfessionalDetailsDto,
   HospitalProfessionalDetailsDto,
-} from '../models/onboarding.dto';
+} from '../models/dtos/onboarding.dto';
 import type {
   IProvider,
   IProfessionalProfile,
@@ -31,25 +35,84 @@ import type {
   IAmbulanceProfessionalDetails,
   INurseProfessionalDetails,
   IHospitalProfessionalDetails,
-} from '../models/provider.schema';
+} from '../models/entities/provider.entity';
 import type {
   ProviderTypeValue,
   GenderType,
   WorkLocationTypeValue,
   WorkModeValue,
   OnlineConsultationModeValue,
-} from '../models/enums';
+} from '../enums/provider.enum';
 import {
   LabService,
   AmbulanceType,
   CoverageArea,
   NurseService,
   HospitalDepartment,
-} from '../models/enums';
+} from '../enums/provider.enum';
 
 const responseService = new ResponseService();
 
+const REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE: Record<
+  ProviderTypeValue,
+  Array<IProviderDocument['documentType']>
+> = {
+  Doctor: [
+    'medicalRegistrationNumber',
+    'medicalRegistrationCertificate',
+    'qualificationProof',
+    'governmentId',
+    'profilePicture',
+  ],
+  'Nurse/Caretaker': ['qualificationProof', 'governmentId', 'profilePicture'],
+  Labs: ['licenseCertificate', 'labEntrancePhoto', 'governmentId', 'profilePicture'],
+  Ambulance: ['vehicleRegistrationPapers', 'driverLicense', 'governmentId', 'profilePicture'],
+  'Hospital/Institution': ['hospitalLicense', 'governmentId', 'profilePicture'],
+};
+
 export class ProviderOnboardingService {
+  private ensureProfileArray(provider: IProvider): void {
+    if (!Array.isArray(provider.professionalProfiles)) {
+      provider.professionalProfiles = [];
+    }
+  }
+
+  private ensureProfessionalDetailsByType(provider: IProvider): string | null {
+    switch (provider.personalInfo.providerType) {
+      case 'Doctor':
+        return provider.professionalProfiles.length > 0
+          ? null
+          : 'Doctor professional profile is required';
+      case 'Nurse/Caretaker':
+        return provider.nurseProfessionalDetails
+          ? null
+          : 'Nurse professional details are required';
+      case 'Labs':
+        return provider.labProfessionalDetails
+          ? null
+          : 'Lab professional details are required';
+      case 'Ambulance':
+        return provider.ambulanceProfessionalDetails
+          ? null
+          : 'Ambulance professional details are required';
+      case 'Hospital/Institution':
+        return provider.hospitalProfessionalDetails
+          ? null
+          : 'Hospital professional details are required';
+      default:
+        return 'Provider type is required';
+    }
+  }
+
+  private missingDocumentTypes(
+    providerType: ProviderTypeValue,
+    docs: IProviderDocument[]
+  ): Array<IProviderDocument['documentType']> {
+    const required = REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE[providerType] ?? [];
+    const available = new Set(docs.map((d) => d.documentType));
+    return required.filter((docType) => !available.has(docType));
+  }
+
   async getProvider(userId: string): Promise<IProvider | null> {
     return findProviderByUserId(userId);
   }
@@ -66,11 +129,12 @@ export class ProviderOnboardingService {
   async submitPersonalInfo(userId: string, dto: PersonalInfoDto) {
     const existing = await findProviderByUserId(userId);
     let provider: IProvider;
+    const fullName = dto.fullName.trim();
 
     if (existing) {
       existing.personalInfo = {
-        firstName: dto.firstName ?? existing.personalInfo.firstName,
-        lastName: dto.lastName ?? existing.personalInfo.lastName,
+        firstName: fullName,
+        lastName: '',
         phoneNumber: dto.phoneNumber ?? existing.personalInfo.phoneNumber,
         alternateMobileNumber:
           dto.alternateMobileNumber ?? existing.personalInfo.alternateMobileNumber,
@@ -89,8 +153,8 @@ export class ProviderOnboardingService {
       provider = await insertProvider({
         userId,
         personalInfo: {
-          firstName: dto.firstName ?? user.firstName,
-          lastName: dto.lastName ?? user.lastName,
+          firstName: fullName,
+          lastName: '',
           phoneNumber: dto.phoneNumber ?? user.mobileNumber,
           alternateMobileNumber: dto.alternateMobileNumber || undefined,
           email,
@@ -100,6 +164,7 @@ export class ProviderOnboardingService {
         onboardingStep: 'professional_details',
       });
     }
+    await updateUserById(userId, { firstName: fullName, lastName: '' });
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -112,6 +177,12 @@ export class ProviderOnboardingService {
   async addProfessionalProfile(userId: string, dto: ProfessionalProfileDto) {
     const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
+    if (provider.personalInfo.providerType !== 'Doctor') {
+      return responseService.badRequest(
+        'Professional profile endpoint is only for Doctor provider type'
+      );
+    }
+    this.ensureProfileArray(provider);
 
     const profile: IProfessionalProfile = {
       workLocationType: dto.workLocationType as WorkLocationTypeValue,
@@ -442,6 +513,17 @@ export class ProviderOnboardingService {
       });
     }
 
+    const docsAfterSave = await findProviderDocumentsByProviderId(providerId);
+    const missingDocs = this.missingDocumentTypes(
+      provider.personalInfo.providerType,
+      docsAfterSave
+    );
+    if (missingDocs.length > 0) {
+      return responseService.badRequest(
+        `Missing required documents for ${provider.personalInfo.providerType}: ${missingDocs.join(', ')}`
+      );
+    }
+
     provider.onboardingStep = 'documents';
     await saveProvider(provider);
 
@@ -456,6 +538,17 @@ export class ProviderOnboardingService {
   async submitBankDetails(userId: string, dto: BankDetailsDto) {
     const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Provider not found');
+    const professionalDetailsError = this.ensureProfessionalDetailsByType(provider);
+    if (professionalDetailsError) {
+      return responseService.badRequest(professionalDetailsError);
+    }
+    const docRows = await findProviderDocumentsByProviderId(provider.id);
+    const missingDocs = this.missingDocumentTypes(provider.personalInfo.providerType, docRows);
+    if (missingDocs.length > 0) {
+      return responseService.badRequest(
+        `Upload required documents before bank details: ${missingDocs.join(', ')}`
+      );
+    }
 
     await upsertProviderPaymentDetail(provider.id, {
       accountHolderName: dto.accountHolderName,

@@ -10,13 +10,13 @@ import {
   GoogleAuthDto,
   AppleAuthDto,
   type SessionMeta,
-} from '../models/auth.dto';
+} from '../models/dtos/auth.dto';
 import { JwtPayload } from '../../interface/auth.interface';
 import {
   verifyGoogleIdToken,
   verifyAppleIdentityToken,
 } from './oauth-verifier';
-import type { GenderType, UserRoleType, UserEntity } from '../models/user.schema';
+import type { GenderType, UserRoleType, UserEntity } from '../models/entities/user.entity';
 import {
   findUserById,
   findUserByMobile,
@@ -26,15 +26,15 @@ import {
   createUser,
   updateUserById,
   patchUserOnboarding,
-} from '../../repositories/user.repository';
+} from '../models/queries/user.query';
 import { buildOnboardingResponse, isTokenEligibleStep } from '../utils/onboarding.util';
 import {
   findLatestOtpByMobile,
   createOtp,
   deleteOtpById,
   incrementOtpAttempts,
-} from '../../repositories/otp.repository';
-import { checkAndRecordOtpSend } from '../../repositories/otp-send.repository';
+} from '../models/queries/otp.query';
+import { checkAndRecordOtpSend } from '../models/queries/otp-send.query';
 import {
   generateRefreshToken,
   generateSessionId,
@@ -44,7 +44,7 @@ import {
   findLoginActivityBySessionId,
   updateLoginActivityAfterRefresh,
   revokeLoginActivityBySessionId,
-} from '../../repositories/login-activity.repository';
+} from '../models/queries/login-activity.query';
 import { jwtExpiryToMs } from '../../common/jwt-expiry';
 import { verifyAccessJwtToken } from '../../common/verify-access-jwt';
 
@@ -113,7 +113,7 @@ export class AuthService {
     );
 
     const existing = await findUserByMobile(dto.mobileNumber);
-    let onboarding = buildOnboardingResponse({
+    const onboarding = buildOnboardingResponse({
       role: 'user',
       isPhoneVerified: true,
       isProfileCompleted: false,
@@ -122,12 +122,16 @@ export class AuthService {
     if (existing) {
       const updated = await patchUserOnboarding(existing.id, { isPhoneVerified: true });
       if (updated) {
-        onboarding = buildOnboardingResponse({
-          role: updated.role,
-          isPhoneVerified: updated.isPhoneVerified,
-          isProfileCompleted: updated.isProfileCompleted,
-          isStepperCompleted: updated.isStepperCompleted,
-        });
+        // Existing user/provider: return post-OTP auth payload.
+        // - tokenEligible => access+refresh tokens
+        // - provider incomplete => onboardingToken for stepper APIs
+        const authData = await this.buildPostOtpAuthData(updated);
+        // Onboarding state lives on user.onboarding only (avoid duplicate top-level field).
+        return this.responseService.success(
+          ResponseCode.VALIDATION_SUCCESS,
+          AuthSuccessMessages.OTP_VERIFIED,
+          { verifiedToken, ...authData }
+        );
       }
     }
 
@@ -136,6 +140,76 @@ export class AuthService {
       AuthSuccessMessages.OTP_VERIFIED,
       { verifiedToken, onboarding }
     );
+  }
+
+  /**
+   * Provider flow without separate register step:
+   * verify OTP, ensure provider user exists, and return onboarding/auth payload.
+   */
+  async verifyProviderOtp(dto: VerifyOtpDto) {
+    const valid = await this.validateOtp(dto.mobileNumber, dto.code);
+    if (valid !== true) return valid;
+
+    const verifiedToken = jwt.sign(
+      { sub: dto.mobileNumber, type: 'otp_verified' },
+      this.jwtSecret,
+      { expiresIn: VERIFIED_TOKEN_EXPIRY }
+    );
+
+    let user = await findUserByMobile(dto.mobileNumber);
+    if (!user) {
+      user = await createUser({
+        mobileNumber: dto.mobileNumber,
+        firstName: 'Provider',
+        lastName: '',
+        termsAndConditionsAccepted: true,
+        isMobileVerified: true,
+        isPhoneVerified: true,
+        // Provider has no register/profile screen in this flow.
+        isProfileCompleted: true,
+        role: 'provider',
+      });
+    } else {
+      const patched = await patchUserOnboarding(user.id, {
+        isPhoneVerified: true,
+        // Provider profile/register step is removed, treat as completed.
+        isProfileCompleted: true,
+      });
+      user = patched ?? user;
+    }
+
+    const authData = await this.buildPostOtpAuthData(user);
+    // Onboarding state lives on user.onboarding only (avoid duplicate top-level field).
+    return this.responseService.success(
+      ResponseCode.VALIDATION_SUCCESS,
+      AuthSuccessMessages.OTP_VERIFIED,
+      { verifiedToken, ...authData }
+    );
+  }
+
+  private async buildPostOtpAuthData(user: UserEntity): Promise<{
+    user: ReturnType<AuthService['toUserResponse']>;
+    tokens?: Awaited<ReturnType<AuthService['issueSession']>>;
+    onboardingToken?: string;
+    onboardingTokenExpiresIn?: string;
+  }> {
+    const data: {
+      user: ReturnType<AuthService['toUserResponse']>;
+      tokens?: Awaited<ReturnType<AuthService['issueSession']>>;
+      onboardingToken?: string;
+      onboardingTokenExpiresIn?: string;
+    } = {
+      user: this.toUserResponse(user),
+    };
+    if (isTokenEligibleStep(user.currentStep)) {
+      data.tokens = await this.issueSession(user);
+      return data;
+    }
+    if (user.role === 'provider') {
+      data.onboardingToken = this.signOnboardingToken(user);
+      data.onboardingTokenExpiresIn = ONBOARDING_JWT_EXPIRY;
+    }
+    return data;
   }
 
   private async validateOtp(

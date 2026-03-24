@@ -1,18 +1,47 @@
-import { dataTable } from '../db/data-table';
-import type { IProvider } from '../providers/models/provider.schema';
+import { dataTable, getKnex } from '../../../db/data-table';
+import type { Knex } from 'knex';
+import type { IProvider } from '../entities/provider.entity';
 import type {
   OnboardingStepValue,
   VerificationStatusValue,
-} from '../providers/models/enums';
+} from '../../enums/provider.enum';
 import type {
   IProviderDocument,
   ProviderDocumentTypeValue,
-} from '../providers/models/provider-document.schema';
-import type { IProviderPaymentDetail } from '../providers/models/provider-payment-detail.schema';
+} from '../entities/provider-document.entity';
+import type { IProviderPaymentDetail } from '../entities/provider-payment-detail.entity';
 
 function parseDate(v: unknown): Date {
   if (v instanceof Date) return v;
   return new Date(String(v));
+}
+
+function safeArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function toJsonb(value: unknown): unknown {
+  if (value == null) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * Bind JSON payloads with explicit DB cast.
+ * This avoids driver-specific object serialization edge cases.
+ */
+function asJsonParam(value: unknown): Knex.Raw | null {
+  const normalized = toJsonb(value);
+  if (normalized == null) return null;
+  return getKnex().raw('?::jsonb', [JSON.stringify(normalized)]);
 }
 
 export function mapProviderRow(row: Record<string, unknown>): IProvider {
@@ -20,8 +49,9 @@ export function mapProviderRow(row: Record<string, unknown>): IProvider {
     id: String(row.id),
     userId: String(row.user_id),
     personalInfo: row.personal_info as IProvider['personalInfo'],
-    professionalProfiles:
-      (row.professional_profiles as IProvider['professionalProfiles']) ?? [],
+    professionalProfiles: safeArray<IProvider['professionalProfiles'][number]>(
+      row.professional_profiles
+    ),
     labProfessionalDetails: row.lab_professional_details
       ? (row.lab_professional_details as IProvider['labProfessionalDetails'])
       : undefined,
@@ -65,8 +95,9 @@ export async function insertProvider(data: {
   const [row] = await dataTable('providers')
     .insert({
       user_id: data.userId,
-      personal_info: data.personalInfo,
-      professional_profiles: [],
+      // Keep JSON columns casted explicitly at query layer.
+      personal_info: asJsonParam(data.personalInfo),
+      professional_profiles: asJsonParam([]),
       onboarding_step: data.onboardingStep,
       verification_status: data.verificationStatus ?? 'pending',
     })
@@ -78,12 +109,13 @@ export async function saveProvider(provider: IProvider): Promise<void> {
   await dataTable('providers')
     .where({ id: provider.id })
     .update({
-      personal_info: provider.personalInfo,
-      professional_profiles: provider.professionalProfiles,
-      lab_professional_details: provider.labProfessionalDetails ?? null,
-      ambulance_professional_details: provider.ambulanceProfessionalDetails ?? null,
-      nurse_professional_details: provider.nurseProfessionalDetails ?? null,
-      hospital_professional_details: provider.hospitalProfessionalDetails ?? null,
+      // All provider profile payloads are JSON/JSONB columns.
+      personal_info: asJsonParam(provider.personalInfo),
+      professional_profiles: asJsonParam(provider.professionalProfiles),
+      lab_professional_details: asJsonParam(provider.labProfessionalDetails),
+      ambulance_professional_details: asJsonParam(provider.ambulanceProfessionalDetails),
+      nurse_professional_details: asJsonParam(provider.nurseProfessionalDetails),
+      hospital_professional_details: asJsonParam(provider.hospitalProfessionalDetails),
       onboarding_step: provider.onboardingStep,
       verification_status: provider.verificationStatus,
       rejection_reason: provider.rejectionReason ?? null,

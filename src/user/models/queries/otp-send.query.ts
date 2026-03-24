@@ -1,4 +1,4 @@
-import { getKnex } from '../db/data-table';
+import { getKnex } from '../../../db/data-table';
 
 const WINDOW_MS = 5 * 60 * 1000;
 export const MAX_OTP_SENDS_PER_WINDOW = 5;
@@ -7,9 +7,6 @@ export type OtpSendCheckResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-/**
- * Atomically checks the 5-sends-per-5-minutes rule and increments the counter when allowed.
- */
 export async function checkAndRecordOtpSend(mobileNumber: string): Promise<OtpSendCheckResult> {
   const knex = getKnex();
   return knex.transaction(async (trx) => {

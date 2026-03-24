@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { dataTable } from '../db/data-table';
+import { dataTable } from '../../../db/data-table';
 
 export type LoginActivityRow = {
   id: string;
@@ -129,19 +129,6 @@ export async function revokeLoginActivityBySessionId(sessionId: string): Promise
     });
 }
 
-export async function updateLoginActivityAccessExpiry(
-  sessionId: string,
-  accessTokenExpiresAt: Date
-): Promise<void> {
-  await dataTable('login_activity')
-    .where({ session_id: sessionId })
-    .update({
-      access_token_expires_at: accessTokenExpiresAt,
-      updated_at: new Date(),
-    });
-}
-
-/** Rotate refresh token and bump access expiry (same session row). */
 export async function updateLoginActivityAfterRefresh(data: {
   sessionId: string;
   refreshTokenHash: string;

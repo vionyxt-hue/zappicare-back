@@ -1,7 +1,1 @@
-export interface IHospital {
-  id: string;
-  name: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export * from './entities/hospital.entity';

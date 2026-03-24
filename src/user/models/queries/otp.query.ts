@@ -1,5 +1,5 @@
-import { dataTable } from '../db/data-table';
-import type { OtpVerificationEntity } from '../user/models/otp-verification.schema';
+import { dataTable } from '../../../db/data-table';
+import type { OtpVerificationEntity } from '../entities/otp-verification.entity';
 
 function parseDate(v: unknown): Date {
   if (v instanceof Date) return v;

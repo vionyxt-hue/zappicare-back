@@ -13,7 +13,7 @@ export const swaggerDocument = {
   tags: [
     { name: 'Health', description: 'Health check' },
     { name: 'Auth', description: 'Authentication (OTP, email/password, Google, Apple)' },
-    { name: 'Provider Verification', description: 'Provider sign-up: send OTP, verify OTP, register as provider' },
+    { name: 'Provider Verification', description: 'Provider onboarding entry: send OTP and verify OTP' },
     { name: 'Provider Onboarding', description: 'Provider onboarding (personal info, professional details, documents, bank details)' },
   ],
   paths: {
@@ -80,7 +80,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Verify OTP',
-        description: 'Verifies the OTP. Returns a short-lived verifiedToken to use in Register (x-verified-token header).',
+        description:
+          'Verifies OTP. When a user exists, onboarding state is returned only inside `data.user.onboarding` (no duplicate top-level `onboarding`).',
         requestBody: {
           required: true,
           content: {
@@ -110,8 +111,16 @@ export const swaggerDocument = {
                     data: {
                       type: 'object',
                       properties: {
-                        verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' },
-                        onboarding: { $ref: '#/components/schemas/OnboardingState' },
+                        verifiedToken: { type: 'string', description: 'Short-lived OTP verification token' },
+                        onboarding: {
+                          description:
+                            'Only when no user exists yet (first-time flow). If `user` is present, use `user.onboarding` instead.',
+                          allOf: [{ $ref: '#/components/schemas/OnboardingState' }],
+                        },
+                        user: { $ref: '#/components/schemas/UserResponse' },
+                        onboardingToken: { type: 'string' },
+                        onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+                        tokens: { $ref: '#/components/schemas/Tokens' },
                       },
                     },
                   },
@@ -444,7 +453,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Verification'],
         summary: 'Verify OTP (provider)',
-        description: 'Verifies the OTP. Returns a short-lived verifiedToken to use in Register (x-verified-token header).',
+        description:
+          'Verifies OTP and returns provider user + tokens. Onboarding state is only in `data.user.onboarding` (no duplicate top-level `onboarding`).',
         requestBody: {
           required: true,
           content: {
@@ -474,8 +484,11 @@ export const swaggerDocument = {
                     data: {
                       type: 'object',
                       properties: {
-                        verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' },
-                        onboarding: { $ref: '#/components/schemas/OnboardingState' },
+                        verifiedToken: { type: 'string', description: 'Short-lived OTP verification token' },
+                        user: { $ref: '#/components/schemas/UserResponse' },
+                        onboardingToken: { type: 'string' },
+                        onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+                        tokens: { $ref: '#/components/schemas/Tokens' },
                       },
                     },
                   },
@@ -487,69 +500,6 @@ export const swaggerDocument = {
         },
       },
     },
-    '/providers/verification/register': {
-      post: {
-        tags: ['Provider Verification'],
-        summary: 'Register as provider',
-        description: 'Creates a provider account after OTP verification. Send x-verified-token header with the token from verify-otp. Role is always provider.',
-        parameters: [
-          {
-            name: 'x-verified-token',
-            in: 'header',
-            required: true,
-            description: 'JWT from POST /providers/verification/verify-otp',
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['mobileNumber', 'firstName', 'lastName', 'gender'],
-                properties: {
-                  mobileNumber: { type: 'string', example: '8160495306' },
-                  countryCode: { type: 'string', example: '+91' },
-                  firstName: { type: 'string', example: 'John' },
-                  lastName: { type: 'string', example: 'Doe' },
-                  emergencyNumber: { type: 'string' },
-                  email: { type: 'string', format: 'email', example: 'provider@example.com' },
-                  referCode: { type: 'string' },
-                  gender: { type: 'string', enum: ['Male', 'Female', 'Other'] },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          '201': {
-            description: 'Provider registered',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    statusCode: { type: 'integer' },
-                    responseCode: { type: 'string' },
-                    message: { type: 'string' },
-                    data: {
-                      type: 'object',
-                      properties: {
-                        user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          '400': { description: 'Validation or OTP required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-        },
-      },
-    },
-
     // ---------- Provider Onboarding ----------
     '/providers/onboarding/status': {
       get: {
@@ -590,7 +540,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Onboarding'],
         summary: 'Submit personal info',
-        description: 'Step 1: Submit or update provider personal information (name, phone, email, provider type, gender).',
+        description:
+          'Step 1: Submit or update provider personal information. `fullName` is mandatory and stored as users.first_name (users.last_name is forced to empty string).',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -1056,10 +1007,11 @@ export const swaggerDocument = {
       },
       PersonalInfoRequest: {
         type: 'object',
-        required: ['firstName', 'lastName', 'phoneNumber', 'email', 'providerType'],
+        required: ['fullName', 'phoneNumber', 'email', 'providerType'],
         properties: {
-          firstName: { type: 'string', example: 'John' },
-          lastName: { type: 'string', example: 'Doe' },
+          fullName: { type: 'string', example: 'John Doe' },
+          firstName: { type: 'string', deprecated: true, description: 'Deprecated: use fullName' },
+          lastName: { type: 'string', deprecated: true, description: 'Deprecated: ignored for provider flow' },
           phoneNumber: { type: 'string', example: '8160495306', description: '10–15 digits' },
           alternateMobileNumber: { type: 'string', example: '' },
           email: { type: 'string', format: 'email' },
@@ -1078,7 +1030,9 @@ export const swaggerDocument = {
       },
       ProfessionalProfileRequest: {
         type: 'object',
-        required: ['workLocationType', 'qualification', 'experienceYears', 'workMode', 'onlineConsultationModes', 'address', 'specialization', 'availability'],
+        required: ['workLocationType', 'specialization'],
+        description:
+          'Doctor-only payload. Hospital / Institution requires hospitalInstitutionName(or id), specialization, and teamCode. Independent Practice requires qualification, experienceYears, workMode, onlineConsultationModes, address, specialization, and availability.',
         properties: {
           workLocationType: { type: 'string', enum: ['Hospital / Institution', 'Independent Practice'] },
           hospitalInstitutionId: { type: 'string' },

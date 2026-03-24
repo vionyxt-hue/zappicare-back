@@ -6,13 +6,10 @@ import {
   WorkMode,
   OnlineConsultationMode,
   DayOfWeek,
-  LabService,
-  AmbulanceType,
   CoverageArea,
   NurseService,
   HospitalDepartment,
-} from './enums';
-
+} from '../enums/provider.enum';
 const phoneRegex = /^[0-9]{10,15}$/;
 
 /**
@@ -21,6 +18,7 @@ const phoneRegex = /^[0-9]{10,15}$/;
  * All fields can be sent to override or when updating existing provider.
  */
 export const PersonalInfoSchema = z.object({
+  fullName: z.string().min(1, 'Full name is required').trim(),
   firstName: z.string().min(1).trim().optional(),
   lastName: z.string().min(1).trim().optional(),
   phoneNumber: z.string().regex(phoneRegex).optional(),
@@ -150,21 +148,47 @@ export const HospitalProfessionalDetailsSchema = z.object({
   operatingHours: z.array(AvailabilitySlotSchema).min(1, 'Add at least one operating hours slot'),
 });
 
-export const ProfessionalProfileSchema = z.object({
-  workLocationType: z.enum(WorkLocationType as unknown as [string, ...string[]]),
-  hospitalInstitutionId: z.string().optional(),
-  hospitalInstitutionName: z.string().optional(),
-  teamCode: z.string().optional(),
-  qualification: z.string().min(1, 'Qualification is required').trim(),
-  experienceYears: z.number().int().min(0),
-  workMode: z.enum(WorkMode as unknown as [string, ...string[]]),
-  onlineConsultationModes: z.array(
-    z.enum(OnlineConsultationMode as unknown as [string, ...string[]])
-  ).min(1, 'Select at least one consultation mode'),
-  address: z.string().min(1, 'Address is required').trim(),
-  specialization: z.string().min(1, 'Specialization is required').trim(),
-  availability: z.array(AvailabilitySlotSchema).min(1, 'Add at least one availability slot'),
-});
+export const ProfessionalProfileSchema = z
+  .object({
+    workLocationType: z.enum(WorkLocationType as unknown as [string, ...string[]]),
+    hospitalInstitutionId: z.string().optional(),
+    hospitalInstitutionName: z.string().optional(),
+    teamCode: z.string().trim().optional(),
+    qualification: z.string().trim().optional(),
+    experienceYears: z.number().int().min(0).optional(),
+    workMode: z.enum(WorkMode as unknown as [string, ...string[]]).optional(),
+    onlineConsultationModes: z
+      .array(z.enum(OnlineConsultationMode as unknown as [string, ...string[]]))
+      .min(1, 'Select at least one consultation mode')
+      .optional(),
+    address: z.string().trim().optional(),
+    specialization: z.string().trim().optional(),
+    availability: z.array(AvailabilitySlotSchema).min(1, 'Add at least one availability slot').optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.workLocationType === 'Hospital / Institution') {
+        return (
+          (!!data.hospitalInstitutionId || !!data.hospitalInstitutionName?.trim()) &&
+          !!data.teamCode?.trim() &&
+          !!data.specialization?.trim()
+        );
+      }
+      return (
+        !!data.qualification?.trim() &&
+        typeof data.experienceYears === 'number' &&
+        !!data.workMode &&
+        !!data.onlineConsultationModes?.length &&
+        !!data.address?.trim() &&
+        !!data.specialization?.trim() &&
+        !!data.availability?.length
+      );
+    },
+    {
+      message:
+        'Hospital / Institution: hospital/institution, specialization, and team code are required. Independent Practice: qualification, experience, work mode, consultation modes, address, specialization, and availability are required.',
+    }
+  );
 
 /** Doctor documents */
 export const DocumentsSchema = z.object({

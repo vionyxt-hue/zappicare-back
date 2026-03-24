@@ -1,13 +1,13 @@
-import type { UserRoleType } from '../models/user.schema';
+import type { UserRoleType } from '../models/entities/user.entity';
 import {
   NextOnboardingAction,
   UserOnboardingStep,
   type NextOnboardingActionValue,
   type UserOnboardingStepValue,
   TOKEN_ELIGIBLE_STEP,
-} from '../models/onboarding.enum';
+} from '../enums/onboarding.enum';
 
-export const ONBOARDING_TOTAL_STEPS = 4;
+export const ONBOARDING_TOTAL_STEPS = 3;
 
 export function computeCurrentStep(input: {
   role: UserRoleType;
@@ -18,11 +18,12 @@ export function computeCurrentStep(input: {
   const { role, isPhoneVerified: p, isProfileCompleted: prof, isStepperCompleted: s } =
     input;
   if (!p) return UserOnboardingStep.NEED_PHONE_VERIFICATION;
-  if (!prof) return UserOnboardingStep.PHONE_VERIFIED_NEED_PROFILE;
   if (role === 'provider') {
+    // Provider flow has no account/register screen; stepper comes right after OTP.
     if (!s) return UserOnboardingStep.NEED_PROVIDER_STEPPER;
     return UserOnboardingStep.READY_FOR_TOKENS;
   }
+  if (!prof) return UserOnboardingStep.PHONE_VERIFIED_NEED_PROFILE;
   return UserOnboardingStep.READY_FOR_TOKENS;
 }
 

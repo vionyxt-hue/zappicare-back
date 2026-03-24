@@ -17,7 +17,7 @@ import {
   GoogleAuthDto,
   AppleAuthDto,
   type SessionMeta,
-} from '../models/auth.dto';
+} from '../models/dtos/auth.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 
 const responseService = new ResponseService();
@@ -85,6 +85,31 @@ export class AuthController {
         return;
       }
       const result = await this.authService.verifyOtp(parsed.data as VerifyOtpDto);
+      res.status(result.statusCode).json(result);
+    } catch (error) {
+      res.status(500).json(
+        responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          (error as Error).message
+        )
+      );
+    }
+  };
+
+  verifyProviderOtp = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = VerifyOtpSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const message =
+          parsed.error instanceof ZodError
+            ? parsed.error.issues
+                .map((e) => `${e.path.join('.')}: ${e.message}`)
+                .join(', ')
+            : 'Validation failed';
+        res.status(400).json(responseService.badRequest(message));
+        return;
+      }
+      const result = await this.authService.verifyProviderOtp(parsed.data as VerifyOtpDto);
       res.status(result.statusCode).json(result);
     } catch (error) {
       res.status(500).json(

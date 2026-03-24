@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
@@ -37,7 +37,7 @@ export function createApp(config: {
     appleClientId: config.appleClientId,
   }));
 
-  // Providers module: verification (OTP, register as provider) + onboarding
+  // Providers module: verification (OTP) + onboarding
   app.use('/providers', createProviderRoutes({
     jwtSecret: config.jwtSecret,
     jwtExpiresIn: config.jwtExpiresIn,
@@ -58,6 +58,17 @@ export function createApp(config: {
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json(responseService.notFound('Not found'));
+  });
+
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (
+      err instanceof SyntaxError &&
+      typeof err.message === 'string' &&
+      err.message.toLowerCase().includes('json')
+    ) {
+      return res.status(400).json(responseService.badRequest('Malformed JSON request body'));
+    }
+    next(err);
   });
 
   return app;

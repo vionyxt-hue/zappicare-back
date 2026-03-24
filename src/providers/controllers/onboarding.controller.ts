@@ -20,7 +20,7 @@ import {
   type HospitalProfessionalDetailsDto,
   type DocumentsDto,
   type BankDetailsDto,
-} from '../models/onboarding.dto';
+} from '../models/dtos/onboarding.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 
 const responseService = new ResponseService();
