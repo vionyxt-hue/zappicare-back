@@ -32,9 +32,6 @@ const EnvironmentSchema = z.object({
   // Security
   BCRYPT_ROUNDS: z.coerce.number().default(12),
 
-  // CORS
-  CORS_ORIGIN: z.string().default('http://localhost:3000'),
-
   // OAuth (optional – omit to disable)
   GOOGLE_CLIENT_ID: z.string().optional(),
   APPLE_CLIENT_ID: z.string().optional(), // Apple bundle ID / service ID for token audience

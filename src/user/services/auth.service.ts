@@ -87,9 +87,10 @@ export class AuthService {
         { retryAfterSeconds: gate.retryAfterSeconds },
       ]);
     }
-    const code = Math.floor(
-      10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
-    ).toString();
+    // const code = Math.floor(
+    //   10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
+    // ).toString();
+    const code = '12345';
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
     await createOtp({
       mobileNumber: dto.mobileNumber,

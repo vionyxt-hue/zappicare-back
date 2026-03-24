@@ -18,7 +18,6 @@ async function bootstrap(): Promise<void> {
     jwtExpiresIn: config.JWT_EXPIRES_IN,
     jwtRefreshExpiresIn: config.JWT_REFRESH_EXPIRES_IN,
     bcryptRounds: config.BCRYPT_ROUNDS,
-    corsOrigin: config.CORS_ORIGIN,
     googleClientId: config.GOOGLE_CLIENT_ID,
     appleClientId: config.APPLE_CLIENT_ID,
   });

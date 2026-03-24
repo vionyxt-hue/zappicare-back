@@ -13,7 +13,6 @@ export function createApp(config: {
   jwtExpiresIn: string;
   jwtRefreshExpiresIn: string;
   bcryptRounds: number;
-  corsOrigin: string;
   googleClientId?: string;
   appleClientId?: string;
 }): Express {
@@ -21,7 +20,8 @@ export function createApp(config: {
   const responseService = new ResponseService();
 
   app.use(helmet());
-  app.use(cors({ origin: config.corsOrigin, credentials: true }));
+  // Echo request Origin (any host/port). Required with credentials:true — "*" is invalid per CORS spec.
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
