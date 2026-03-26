@@ -11,6 +11,8 @@ export function createUserAuthRoutes(config: {
   bcryptRounds: number;
   googleClientId?: string;
   appleClientId?: string;
+  facebookAppId?: string;
+  facebookAppSecret?: string;
 }): Router {
   const router = Router();
   const authService = new AuthService(config);
@@ -21,8 +23,7 @@ export function createUserAuthRoutes(config: {
   router.post(`/${AuthEndPoints.VERIFY_OTP}`, authController.verifyOtp);
   router.post(`/${AuthEndPoints.REGISTER}`, authController.register);
   router.post(`/${AuthEndPoints.LOGIN}`, authController.login);
-  router.post(`/${AuthEndPoints.GOOGLE}`, authController.loginWithGoogle);
-  router.post(`/${AuthEndPoints.APPLE}`, authController.loginWithApple);
+  router.post(`/${AuthEndPoints.OAUTH}`, authController.oauthLogin);
   router.post(`/${AuthEndPoints.REFRESH}`, authController.refresh);
   router.post(`/${AuthEndPoints.LOGOUT}`, authMiddleware, authController.logout);
   router.get(`/${AuthEndPoints.ME}`, authMiddleware, authController.me);

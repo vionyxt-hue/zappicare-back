@@ -15,6 +15,7 @@ import { JwtPayload } from '../../interface/auth.interface';
 import {
   verifyGoogleIdToken,
   verifyAppleIdentityToken,
+  verifyFacebookAccessToken,
 } from './oauth-verifier';
 import type { GenderType, UserRoleType, UserEntity } from '../models/entities/user.entity';
 import {
@@ -23,6 +24,7 @@ import {
   findUserByEmailLower,
   findUserByGoogleId,
   findUserByAppleId,
+  findUserByFacebookId,
   createUser,
   updateUserById,
   patchUserOnboarding,
@@ -47,13 +49,20 @@ import {
 } from '../models/queries/login-activity.query';
 import { jwtExpiryToMs } from '../../common/jwt-expiry';
 import { verifyAccessJwtToken } from '../../common/verify-access-jwt';
+import { createHash } from 'crypto';
 
 const OTP_EXPIRY_MINUTES = 5;
-const OTP_LENGTH = 5;
+const OTP_LENGTH = 5; // used for OTP generation
 const VERIFIED_TOKEN_EXPIRY = '10m';
 /** Lets providers call `/providers/onboarding/*` before step 4 (no refresh session). */
 const ONBOARDING_JWT_EXPIRY = '7d';
 const MAX_OTP_ATTEMPTS = 5;
+
+function buildOAuthPlaceholderMobile(provider: string, providerId: string): string {
+  // `users.mobile_number` is varchar(32); keep this deterministic + unique within 32 chars.
+  const hash = createHash('sha256').update(`${provider}:${providerId}`).digest('hex');
+  return `oauth_${provider}_${hash.slice(0, 24)}`; // 5 + provider + 1 + 24 <= 32 for google/apple/facebook
+}
 
 export class AuthService {
   private readonly responseService = new ResponseService();
@@ -63,6 +72,8 @@ export class AuthService {
   private readonly bcryptRounds: number;
   private readonly googleClientId?: string;
   private readonly appleClientId?: string;
+  private readonly facebookAppId?: string;
+  private readonly facebookAppSecret?: string;
 
   constructor(config: {
     jwtSecret: string;
@@ -71,6 +82,8 @@ export class AuthService {
     bcryptRounds: number;
     googleClientId?: string;
     appleClientId?: string;
+    facebookAppId?: string;
+    facebookAppSecret?: string;
   }) {
     this.jwtSecret = config.jwtSecret;
     this.jwtExpiresIn = config.jwtExpiresIn;
@@ -78,6 +91,8 @@ export class AuthService {
     this.bcryptRounds = config.bcryptRounds;
     this.googleClientId = config.googleClientId;
     this.appleClientId = config.appleClientId;
+    this.facebookAppId = config.facebookAppId;
+    this.facebookAppSecret = config.facebookAppSecret;
   }
 
   async sendOtp(dto: SendOtpDto) {
@@ -87,10 +102,9 @@ export class AuthService {
         { retryAfterSeconds: gate.retryAfterSeconds },
       ]);
     }
-    // const code = Math.floor(
-    //   10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
-    // ).toString();
-    const code = '12345';
+    const code = Math.floor(
+      10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
+    ).toString();
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
     await createOtp({
       mobileNumber: dto.mobileNumber,
@@ -341,7 +355,7 @@ export class AuthService {
     }
     try {
       const payload = await verifyGoogleIdToken(dto.idToken, this.googleClientId);
-      return this.findOrCreateOAuthUser(
+      return await this.findOrCreateOAuthUser(
         'google',
         payload.sub,
         payload.email,
@@ -351,7 +365,8 @@ export class AuthService {
         dto.termsAndConditionsAccepted,
         sessionMeta
       );
-    } catch {
+    } catch (error ) {
+      console.log('error', error);
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
     }
   }
@@ -366,7 +381,7 @@ export class AuthService {
         this.appleClientId
       );
       const namePart = payload.email?.split('@')[0] ?? 'User';
-      return this.findOrCreateOAuthUser(
+      return await this.findOrCreateOAuthUser(
         'apple',
         payload.sub,
         payload.email,
@@ -381,8 +396,75 @@ export class AuthService {
     }
   }
 
+  async loginWithOAuth(
+    dto: { provider: string; token: string; role?: string; termsAndConditionsAccepted?: boolean },
+    sessionMeta?: SessionMeta
+  ) {
+    try {
+      if (dto.provider === 'google') {
+        if (!this.googleClientId) {
+          return this.responseService.badRequest(AuthErrorMessages.OAUTH_NOT_CONFIGURED);
+        }
+        const payload = await verifyGoogleIdToken(dto.token, this.googleClientId);
+        return await this.findOrCreateOAuthUser(
+          'google',
+          payload.sub,
+          payload.email,
+          payload.given_name ?? payload.name?.split(' ')[0] ?? 'User',
+          payload.family_name ?? (payload.name?.split(' ').slice(1).join(' ') || 'User'),
+          dto.role ?? 'user',
+          dto.termsAndConditionsAccepted,
+          sessionMeta
+        );
+      }
+
+      if (dto.provider === 'apple') {
+        if (!this.appleClientId) {
+          return this.responseService.badRequest(AuthErrorMessages.OAUTH_NOT_CONFIGURED);
+        }
+        const payload = await verifyAppleIdentityToken(dto.token, this.appleClientId);
+        const namePart = payload.email?.split('@')[0] ?? 'User';
+        return await this.findOrCreateOAuthUser(
+          'apple',
+          payload.sub,
+          payload.email,
+          namePart,
+          'User',
+          dto.role ?? 'user',
+          dto.termsAndConditionsAccepted,
+          sessionMeta
+        );
+      }
+
+      if (!this.facebookAppId || !this.facebookAppSecret) {
+        return this.responseService.badRequest(AuthErrorMessages.OAUTH_NOT_CONFIGURED);
+      }
+      const fb = await verifyFacebookAccessToken({
+        accessToken: dto.token,
+        appId: this.facebookAppId,
+        appSecret: this.facebookAppSecret,
+      });
+      const parts = (fb.name ?? 'User').trim().split(' ');
+      const firstName = parts[0] || 'User';
+      const lastName = parts.slice(1).join(' ') || 'User';
+      return await this.findOrCreateOAuthUser(
+        'facebook',
+        fb.id,
+        fb.email,
+        firstName,
+        lastName,
+        dto.role ?? 'user',
+        dto.termsAndConditionsAccepted,
+        sessionMeta
+      );
+    } catch (error) {
+      console.log('error', error);
+      return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
+    }
+  }
+
   private async findOrCreateOAuthUser(
-    provider: 'google' | 'apple',
+    provider: 'google' | 'apple' | 'facebook',
     providerId: string,
     email: string | undefined,
     firstName: string,
@@ -391,11 +473,14 @@ export class AuthService {
     termsAccepted: boolean | undefined,
     sessionMeta?: SessionMeta
   ) {
-    const idField = provider === 'google' ? 'googleId' : 'appleId';
+    const idField =
+      provider === 'google' ? 'googleId' : provider === 'apple' ? 'appleId' : 'facebookId';
     let user =
       provider === 'google'
         ? await findUserByGoogleId(providerId)
-        : await findUserByAppleId(providerId);
+        : provider === 'apple'
+          ? await findUserByAppleId(providerId)
+          : await findUserByFacebookId(providerId);
     if (user) {
       if (!user.isActive) {
         return this.responseService.badRequest(AuthErrorMessages.AUTHENTICATION_FAILED);
@@ -413,7 +498,9 @@ export class AuthService {
         const updated =
           idField === 'googleId'
             ? await updateUserById(user.id, { googleId: providerId })
-            : await updateUserById(user.id, { appleId: providerId });
+            : idField === 'appleId'
+              ? await updateUserById(user.id, { appleId: providerId })
+              : await updateUserById(user.id, { facebookId: providerId });
         const linked = updated ?? (await findUserById(user.id));
         if (!linked) {
           return this.responseService.badRequest(AuthErrorMessages.USER_NOT_FOUND);
@@ -434,7 +521,7 @@ export class AuthService {
         AuthErrorMessages.TERMS_AND_CONDITIONS_REQUIRED
       );
     }
-    const placeholderMobile = `oauth_${provider}_${providerId}`;
+    const placeholderMobile = buildOAuthPlaceholderMobile(provider, providerId);
     const newUser = await createUser({
       mobileNumber: placeholderMobile,
       firstName,
@@ -442,6 +529,7 @@ export class AuthService {
       email: email?.toLowerCase(),
       googleId: idField === 'googleId' ? providerId : undefined,
       appleId: idField === 'appleId' ? providerId : undefined,
+      facebookId: idField === 'facebookId' ? providerId : undefined,
       termsAndConditionsAccepted: true,
       isMobileVerified: false,
       isPhoneVerified: false,

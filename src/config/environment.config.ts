@@ -35,6 +35,8 @@ const EnvironmentSchema = z.object({
   // OAuth (optional – omit to disable)
   GOOGLE_CLIENT_ID: z.string().optional(),
   APPLE_CLIENT_ID: z.string().optional(), // Apple bundle ID / service ID for token audience
+  FACEBOOK_APP_ID: z.string().optional(),
+  FACEBOOK_APP_SECRET: z.string().optional(),
 
   // Logging
   LOG_LEVEL: z

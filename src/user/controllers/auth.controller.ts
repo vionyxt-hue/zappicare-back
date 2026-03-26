@@ -9,6 +9,7 @@ import {
   LoginSchema,
   GoogleAuthSchema,
   AppleAuthSchema,
+  OAuthLoginSchema,
   RefreshTokenSchema,
   SendOtpDto,
   VerifyOtpDto,
@@ -16,6 +17,7 @@ import {
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
+  OAuthLoginDto,
   type SessionMeta,
 } from '../models/dtos/auth.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
@@ -222,6 +224,34 @@ export class AuthController {
       }
       const result = await this.authService.loginWithApple(
         parsed.data as AppleAuthDto,
+        extractSessionMeta(req)
+      );
+      res.status(result.statusCode).json(result);
+    } catch (error) {
+      res.status(500).json(
+        responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          (error as Error).message
+        )
+      );
+    }
+  };
+
+  oauthLogin = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = OAuthLoginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const message =
+          parsed.error instanceof ZodError
+            ? parsed.error.issues
+                .map((e) => `${e.path.join('.')}: ${e.message}`)
+                .join(', ')
+            : 'Validation failed';
+        res.status(400).json(responseService.badRequest(message));
+        return;
+      }
+      const result = await this.authService.loginWithOAuth(
+        parsed.data as OAuthLoginDto,
         extractSessionMeta(req)
       );
       res.status(result.statusCode).json(result);

@@ -20,6 +20,8 @@ async function bootstrap(): Promise<void> {
     bcryptRounds: config.BCRYPT_ROUNDS,
     googleClientId: config.GOOGLE_CLIENT_ID,
     appleClientId: config.APPLE_CLIENT_ID,
+    facebookAppId: config.FACEBOOK_APP_ID,
+    facebookAppSecret: config.FACEBOOK_APP_SECRET,
   });
 
   const port = config.PORT;

@@ -9,6 +9,8 @@ export type ProviderRoutesConfig = {
   bcryptRounds?: number;
   googleClientId?: string;
   appleClientId?: string;
+  facebookAppId?: string;
+  facebookAppSecret?: string;
 };
 
 export function createProviderRoutes(config: ProviderRoutesConfig): Router {
@@ -28,6 +30,8 @@ export function createProviderRoutes(config: ProviderRoutesConfig): Router {
         bcryptRounds: config.bcryptRounds,
         googleClientId: config.googleClientId,
         appleClientId: config.appleClientId,
+        facebookAppId: config.facebookAppId,
+        facebookAppSecret: config.facebookAppSecret,
       })
     );
   }

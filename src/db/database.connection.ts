@@ -87,6 +87,44 @@ export class DatabaseConnection {
       await this.knex.raw('SELECT 1');
       await this.getSchemaManager().ensureSchemasExist();
       this.isConnected = true;
+      // Log DB + schema wiring once to avoid “wrong DB/schema” confusion during local dev.
+      try {
+        const dataSchema = this.config.DB_DATA_SCHEMA;
+        const dbRow = await this.knex
+          .raw(
+            `
+            select
+              current_database() as db,
+              current_user as user,
+              current_schema() as current_schema
+          `
+          )
+          .then((r) => (Array.isArray(r?.rows) ? r.rows[0] : undefined));
+
+        const fbCol = await this.knex
+          .raw(
+            `
+            select 1
+            from information_schema.columns
+            where table_schema = ?
+              and table_name = 'users'
+              and column_name = 'facebook_id'
+            limit 1
+          `,
+            [dataSchema]
+          )
+          .then((r) => (Array.isArray(r?.rows) ? r.rows.length > 0 : false));
+
+        this.log(
+          LogLevel.INFO,
+          `DB ready: db=${String(dbRow?.db ?? 'unknown')} schema=data:${dataSchema} facebook_id=${
+            fbCol ? 'yes' : 'no'
+          }`
+        );
+      } catch {
+        // Don't block startup for diagnostics.
+      }
+
       this.log(LogLevel.INFO, 'Database connected successfully');
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

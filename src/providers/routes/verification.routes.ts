@@ -13,6 +13,8 @@ export function createProviderVerificationRoutes(config: {
   bcryptRounds: number;
   googleClientId?: string;
   appleClientId?: string;
+  facebookAppId?: string;
+  facebookAppSecret?: string;
 }): Router {
   const router = Router();
   const authService = new AuthService(config);

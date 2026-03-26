@@ -20,6 +20,12 @@ export interface AppleTokenPayload {
   email_verified?: boolean | string;
 }
 
+export interface FacebookTokenPayload {
+  id: string;
+  email?: string;
+  name?: string;
+}
+
 export async function verifyGoogleIdToken(
   idToken: string,
   clientId: string
@@ -72,4 +78,39 @@ export async function verifyAppleIdentityToken(
     email: payload.email,
     email_verified: payload.email_verified,
   };
+}
+
+export async function verifyFacebookAccessToken(params: {
+  accessToken: string;
+  appId: string;
+  appSecret: string;
+}): Promise<FacebookTokenPayload> {
+  const appAccessToken = `${params.appId}|${params.appSecret}`;
+  const debugUrl =
+    `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(params.accessToken)}` +
+    `&access_token=${encodeURIComponent(appAccessToken)}`;
+  const debugRes = await fetch(debugUrl);
+  if (!debugRes.ok) {
+    throw new Error('Invalid Facebook token');
+  }
+  const debugJson = (await debugRes.json()) as {
+    data?: { is_valid?: boolean; app_id?: string; user_id?: string };
+  };
+  if (!debugJson.data?.is_valid) {
+    throw new Error('Invalid Facebook token');
+  }
+  if (String(debugJson.data.app_id ?? '') !== params.appId) {
+    throw new Error('Facebook token not issued for this app');
+  }
+  const meUrl =
+    `https://graph.facebook.com/me?fields=id,name,email&access_token=${encodeURIComponent(params.accessToken)}`;
+  const meRes = await fetch(meUrl);
+  if (!meRes.ok) {
+    throw new Error('Invalid Facebook token');
+  }
+  const meJson = (await meRes.json()) as { id?: string; name?: string; email?: string };
+  if (!meJson.id) {
+    throw new Error('Invalid Facebook token payload');
+  }
+  return { id: meJson.id, name: meJson.name, email: meJson.email };
 }

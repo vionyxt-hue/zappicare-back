@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Gender, UserRole } from '../entities/user.entity';
+import { OAuthProvider } from '../../enums/oauth-provider.enum';
 
 const mobileRegex = /^[0-9]{10,15}$/;
 
@@ -56,6 +57,15 @@ export const AppleAuthSchema = z.object({
   }).optional(),
 }).passthrough();
 
+export const OAuthLoginSchema = z.object({
+  provider: z.enum(OAuthProvider),
+  token: z.string().min(1, 'token is required'),
+  role: z.enum(UserRole as unknown as [string, ...string[]]).optional().default('user'),
+  termsAndConditionsAccepted: z.literal(true, {
+    errorMap: () => ({ message: 'Terms and conditions must be accepted' }),
+  }).optional(),
+}).passthrough();
+
 export const RefreshTokenSchema = z.object({
   refreshToken: z.string().min(1, 'refreshToken is required'),
 });
@@ -66,6 +76,7 @@ export type RegisterDto = z.infer<typeof RegisterSchema>;
 export type LoginDto = z.infer<typeof LoginSchema>;
 export type GoogleAuthDto = z.infer<typeof GoogleAuthSchema>;
 export type AppleAuthDto = z.infer<typeof AppleAuthSchema>;
+export type OAuthLoginDto = z.infer<typeof OAuthLoginSchema>;
 export type RefreshTokenDto = z.infer<typeof RefreshTokenSchema>;
 
 export type SessionMeta = {

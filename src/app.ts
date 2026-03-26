@@ -15,6 +15,8 @@ export function createApp(config: {
   bcryptRounds: number;
   googleClientId?: string;
   appleClientId?: string;
+  facebookAppId?: string;
+  facebookAppSecret?: string;
 }): Express {
   const app = express();
   const responseService = new ResponseService();
@@ -35,6 +37,8 @@ export function createApp(config: {
     bcryptRounds: config.bcryptRounds,
     googleClientId: config.googleClientId,
     appleClientId: config.appleClientId,
+    facebookAppId: config.facebookAppId,
+    facebookAppSecret: config.facebookAppSecret,
   }));
 
   // Providers module: verification (OTP) + onboarding
@@ -45,6 +49,8 @@ export function createApp(config: {
     bcryptRounds: config.bcryptRounds,
     googleClientId: config.googleClientId,
     appleClientId: config.appleClientId,
+    facebookAppId: config.facebookAppId,
+    facebookAppSecret: config.facebookAppSecret,
   }));
 
   // Admin module

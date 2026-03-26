@@ -253,71 +253,40 @@ export const swaggerDocument = {
         },
       },
     },
-    '/auth/google': {
+    '/auth/oauth': {
       post: {
         tags: ['Auth'],
-        summary: 'Login / sign up with Google',
-        description: 'Authenticate with Google ID token. New users must send termsAndConditionsAccepted: true.',
+        summary: 'OAuth login (Google/Apple/Facebook)',
+        description:
+          'Single OAuth endpoint. Send provider token and receive the same response shape as login (tokens only when tokenEligible). For new users, termsAndConditionsAccepted must be true.',
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['idToken'],
+                required: ['provider', 'token'],
                 properties: {
-                  idToken: { type: 'string', description: 'Google ID token from Google Sign-In SDK' },
+                  provider: { type: 'string', enum: ['google', 'apple', 'facebook'] },
+                  token: { type: 'string', description: 'google:idToken, apple:identityToken, facebook:access_token' },
                   role: { type: 'string', enum: ['user', 'provider'], default: 'user' },
                   termsAndConditionsAccepted: { type: 'boolean', enum: [true], description: 'Required for new sign-ups' },
+                  fcmToken: { type: 'string' },
+                  apnsToken: { type: 'string' },
+                  onesignalPlayerId: { type: 'string' },
+                  devicePlatform: { type: 'string' },
+                  timezone: { type: 'string' },
+                  deviceInfo: { type: 'object' },
+                  locationInfo: { type: 'object' },
                 },
               },
             },
           },
         },
         responses: {
-          '200': {
-            description: 'Login success (existing user)',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } },
-          },
-          '201': {
-            description: 'User created (new sign-up)',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } },
-          },
-          '400': { description: 'Invalid token or terms required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-        },
-      },
-    },
-    '/auth/apple': {
-      post: {
-        tags: ['Auth'],
-        summary: 'Login / sign up with Apple',
-        description: 'Authenticate with Apple identity token. New users must send termsAndConditionsAccepted: true.',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['identityToken'],
-                properties: {
-                  identityToken: { type: 'string', description: 'Apple identity token from Sign in with Apple' },
-                  role: { type: 'string', enum: ['user', 'provider'], default: 'user' },
-                  termsAndConditionsAccepted: { type: 'boolean', enum: [true], description: 'Required for new sign-ups' },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': {
-            description: 'Login success (existing user)',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } },
-          },
-          '201': {
-            description: 'User created (new sign-up)',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } },
-          },
-          '400': { description: 'Invalid token or terms required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '200': { description: 'Login success', content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } } },
+          '201': { description: 'User created', content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthSuccessResponse' } } } },
+          '400': { description: 'Invalid token/terms missing', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

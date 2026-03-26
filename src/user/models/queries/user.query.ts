@@ -38,6 +38,7 @@ export function mapUserRow(row: Record<string, unknown>): UserEntity {
     role,
     googleId: row.google_id ? String(row.google_id) : undefined,
     appleId: row.apple_id ? String(row.apple_id) : undefined,
+    facebookId: row.facebook_id ? String(row.facebook_id) : undefined,
     isActive: row.is_active !== false,
     createdAt: parseDate(row.created_at),
     updatedAt: parseDate(row.updated_at),
@@ -71,6 +72,11 @@ export async function findUserByAppleId(appleId: string): Promise<UserEntity | n
   return row ? mapUserRow(row) : null;
 }
 
+export async function findUserByFacebookId(facebookId: string): Promise<UserEntity | null> {
+  const row = await dataTable('users').where({ facebook_id: facebookId }).first();
+  return row ? mapUserRow(row) : null;
+}
+
 export async function createUser(data: {
   mobileNumber: string;
   countryCode?: string;
@@ -89,6 +95,7 @@ export async function createUser(data: {
   role: UserRoleType;
   googleId?: string;
   appleId?: string;
+  facebookId?: string;
   isActive?: boolean;
 }): Promise<UserEntity> {
   const isPhoneVerified = data.isPhoneVerified ?? false;
@@ -121,6 +128,7 @@ export async function createUser(data: {
       role: data.role,
       google_id: data.googleId ?? null,
       apple_id: data.appleId ?? null,
+      facebook_id: data.facebookId ?? null,
       is_active: data.isActive ?? true,
     })
     .returning('*');
@@ -165,6 +173,7 @@ export async function updateUserById(
   patch: Partial<{
     googleId: string;
     appleId: string;
+    facebookId: string;
     email: string;
     mobileNumber: string;
     firstName: string;
@@ -175,6 +184,7 @@ export async function updateUserById(
   const update: Record<string, unknown> = {};
   if (patch.googleId !== undefined) update.google_id = patch.googleId;
   if (patch.appleId !== undefined) update.apple_id = patch.appleId;
+  if (patch.facebookId !== undefined) update.facebook_id = patch.facebookId;
   if (patch.email !== undefined) update.email = patch.email.toLowerCase();
   if (patch.mobileNumber !== undefined) update.mobile_number = patch.mobileNumber;
   if (patch.firstName !== undefined) update.first_name = patch.firstName;

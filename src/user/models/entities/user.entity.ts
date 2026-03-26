@@ -24,6 +24,7 @@ export interface UserEntity {
   role: UserRoleType;
   googleId?: string;
   appleId?: string;
+  facebookId?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
