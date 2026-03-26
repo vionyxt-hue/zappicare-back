@@ -3,7 +3,8 @@ export const swaggerDocument = {
   openapi: '3.0.3',
   info: {
     title: 'ZappieCare API',
-    description: 'ZappieCare Backend API – Auth (manual, Google, Apple), user registration and login.',
+    description:
+      'ZappieCare Backend API – Auth (OTP, email/password, Google, Apple), registration, refresh tokens, and onboarding (steps 0–4; full access+refresh only when tokenEligible).',
     version: '1.0.0',
   },
   servers: [
@@ -12,7 +13,7 @@ export const swaggerDocument = {
   tags: [
     { name: 'Health', description: 'Health check' },
     { name: 'Auth', description: 'Authentication (OTP, email/password, Google, Apple)' },
-    { name: 'Provider Verification', description: 'Provider sign-up: send OTP, verify OTP, register as provider' },
+    { name: 'Provider Verification', description: 'Provider onboarding entry: send OTP and verify OTP' },
     { name: 'Provider Onboarding', description: 'Provider onboarding (personal info, professional details, documents, bank details)' },
   ],
   paths: {
@@ -68,6 +69,10 @@ export const swaggerDocument = {
         responses: {
           '200': { description: 'OTP sent', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '429': {
+            description: 'Too many OTP sends (max 5 per 5 minutes per mobile); check errors[0].retryAfterSeconds',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/RateLimitErrorResponse' } } },
+          },
         },
       },
     },
@@ -75,7 +80,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Verify OTP',
-        description: 'Verifies the OTP. Returns a short-lived verifiedToken to use in Register (x-verified-token header).',
+        description:
+          'Verifies OTP. When a user exists, onboarding state is returned only inside `data.user.onboarding` (no duplicate top-level `onboarding`).',
         requestBody: {
           required: true,
           content: {
@@ -104,7 +110,18 @@ export const swaggerDocument = {
                     message: { type: 'string' },
                     data: {
                       type: 'object',
-                      properties: { verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' } },
+                      properties: {
+                        verifiedToken: { type: 'string', description: 'Short-lived OTP verification token' },
+                        onboarding: {
+                          description:
+                            'Only when no user exists yet (first-time flow). If `user` is present, use `user.onboarding` instead.',
+                          allOf: [{ $ref: '#/components/schemas/OnboardingState' }],
+                        },
+                        user: { $ref: '#/components/schemas/UserResponse' },
+                        onboardingToken: { type: 'string' },
+                        onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+                        tokens: { $ref: '#/components/schemas/Tokens' },
+                      },
                     },
                   },
                 },
@@ -119,7 +136,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Register (create account)',
-        description: 'Creates a user after OTP verification. Send x-verified-token header with the token from verify-otp.',
+        description:
+          'Creates a user after OTP verification. Send x-verified-token header with the token from verify-otp. Access+refresh tokens are returned only when onboarding is complete (tokenEligible); otherwise only `user` is returned.',
         parameters: [
           {
             name: 'x-verified-token',
@@ -166,7 +184,7 @@ export const swaggerDocument = {
                       type: 'object',
                       properties: {
                         user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
+                        tokens: { $ref: '#/components/schemas/Tokens', description: 'Present only when tokenEligible' },
                       },
                     },
                   },
@@ -182,7 +200,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Login',
-        description: 'Login with (1) mobileNumber + code (OTP), or (2) mobileNumber + password, or (3) email + password.',
+        description:
+          'Login with (1) mobileNumber + code (OTP), or (2) mobileNumber + password, or (3) email + password. Tokens are omitted until onboarding is complete. Optional body fields for session: fcmToken, devicePlatform, timezone, deviceInfo, locationInfo.',
         requestBody: {
           required: true,
           content: {
@@ -194,6 +213,13 @@ export const swaggerDocument = {
                   email: { type: 'string', format: 'email' },
                   password: { type: 'string' },
                   code: { type: 'string', minLength: 5, maxLength: 5, description: 'OTP when using mobile' },
+                  fcmToken: { type: 'string' },
+                  apnsToken: { type: 'string' },
+                  onesignalPlayerId: { type: 'string' },
+                  devicePlatform: { type: 'string' },
+                  timezone: { type: 'string' },
+                  deviceInfo: { type: 'object' },
+                  locationInfo: { type: 'object' },
                 },
               },
             },
@@ -201,7 +227,7 @@ export const swaggerDocument = {
         },
         responses: {
           '200': {
-            description: 'Login success',
+            description: 'Login success (tokens only if tokenEligible)',
             content: {
               'application/json': {
                 schema: {
@@ -214,7 +240,7 @@ export const swaggerDocument = {
                       type: 'object',
                       properties: {
                         user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
+                        tokens: { $ref: '#/components/schemas/Tokens', description: 'Omitted until onboarding complete' },
                       },
                     },
                   },
@@ -295,11 +321,51 @@ export const swaggerDocument = {
         },
       },
     },
+    '/auth/refresh': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Refresh access token',
+        description:
+          'Exchanges a valid refresh token for new access and refresh tokens. Session row is rotated in `login_activity`.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['refreshToken'],
+                properties: { refreshToken: { type: 'string' } },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'New tokens',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    statusCode: { type: 'integer' },
+                    responseCode: { type: 'string' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/Tokens' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Invalid or expired refresh', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/auth/logout': {
       post: {
         tags: ['Auth'],
         summary: 'Logout',
-        description: 'Logout current session. Requires Bearer token.',
+        description:
+          'Revokes the current session (from access JWT `sid`). Requires Bearer access token.',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': {
@@ -376,6 +442,10 @@ export const swaggerDocument = {
         responses: {
           '200': { description: 'OTP sent', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '429': {
+            description: 'OTP send rate limited',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/RateLimitErrorResponse' } } },
+          },
         },
       },
     },
@@ -383,7 +453,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Verification'],
         summary: 'Verify OTP (provider)',
-        description: 'Verifies the OTP. Returns a short-lived verifiedToken to use in Register (x-verified-token header).',
+        description:
+          'Verifies OTP and returns provider user + tokens. Onboarding state is only in `data.user.onboarding` (no duplicate top-level `onboarding`).',
         requestBody: {
           required: true,
           content: {
@@ -412,7 +483,13 @@ export const swaggerDocument = {
                     message: { type: 'string' },
                     data: {
                       type: 'object',
-                      properties: { verifiedToken: { type: 'string', description: 'Use in x-verified-token for Register' } },
+                      properties: {
+                        verifiedToken: { type: 'string', description: 'Short-lived OTP verification token' },
+                        user: { $ref: '#/components/schemas/UserResponse' },
+                        onboardingToken: { type: 'string' },
+                        onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+                        tokens: { $ref: '#/components/schemas/Tokens' },
+                      },
                     },
                   },
                 },
@@ -423,75 +500,13 @@ export const swaggerDocument = {
         },
       },
     },
-    '/providers/verification/register': {
-      post: {
-        tags: ['Provider Verification'],
-        summary: 'Register as provider',
-        description: 'Creates a provider account after OTP verification. Send x-verified-token header with the token from verify-otp. Role is always provider.',
-        parameters: [
-          {
-            name: 'x-verified-token',
-            in: 'header',
-            required: true,
-            description: 'JWT from POST /providers/verification/verify-otp',
-            schema: { type: 'string' },
-          },
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['mobileNumber', 'firstName', 'lastName', 'gender'],
-                properties: {
-                  mobileNumber: { type: 'string', example: '8160495306' },
-                  countryCode: { type: 'string', example: '+91' },
-                  firstName: { type: 'string', example: 'John' },
-                  lastName: { type: 'string', example: 'Doe' },
-                  emergencyNumber: { type: 'string' },
-                  email: { type: 'string', format: 'email', example: 'provider@example.com' },
-                  referCode: { type: 'string' },
-                  gender: { type: 'string', enum: ['Male', 'Female', 'Other'] },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          '201': {
-            description: 'Provider registered',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    statusCode: { type: 'integer' },
-                    responseCode: { type: 'string' },
-                    message: { type: 'string' },
-                    data: {
-                      type: 'object',
-                      properties: {
-                        user: { $ref: '#/components/schemas/UserResponse' },
-                        tokens: { $ref: '#/components/schemas/Tokens' },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          '400': { description: 'Validation or OTP required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-        },
-      },
-    },
-
     // ---------- Provider Onboarding ----------
     '/providers/onboarding/status': {
       get: {
         tags: ['Provider Onboarding'],
         summary: 'Get onboarding status',
-        description: 'Returns current onboarding step, verification status, and provider summary. Requires provider Bearer token.',
+        description:
+          'Returns current onboarding step, verification status, and provider summary. Use **accessToken** after onboarding is complete, or **onboardingToken** from register/login while step 4 is not reached (JWT typ=onboarding).',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': {
@@ -525,7 +540,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Onboarding'],
         summary: 'Submit personal info',
-        description: 'Step 1: Submit or update provider personal information (name, phone, email, provider type, gender).',
+        description:
+          'Step 1: Submit or update provider personal information. `fullName` is mandatory and stored as users.first_name (users.last_name is forced to empty string).',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -861,10 +877,33 @@ export const swaggerDocument = {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        description: 'Access token from login/register/google/apple',
+        description:
+          'For most APIs: access JWT (typ=access) with `sid`. For `/providers/onboarding/*` before step 4: use **onboardingToken** from register/login (typ=onboarding).',
       },
     },
     schemas: {
+      OnboardingState: {
+        type: 'object',
+        description: 'Client stepper / gating (currentStep 0–4; tokenEligible at 4)',
+        properties: {
+          currentStep: { type: 'integer', minimum: 0, maximum: 4 },
+          totalSteps: { type: 'integer', example: 4 },
+          isPhoneVerified: { type: 'boolean' },
+          isProfileCompleted: { type: 'boolean' },
+          isStepperCompleted: { type: 'boolean', description: 'Provider bank/stepper submitted' },
+          tokenEligible: { type: 'boolean' },
+          nextAction: {
+            type: 'string',
+            enum: [
+              'VERIFY_PHONE',
+              'COMPLETE_PROFILE',
+              'COMPLETE_PROVIDER_STEPPER',
+              'VERIFY_PHONE_TO_FINISH',
+              'NONE',
+            ],
+          },
+        },
+      },
       UserResponse: {
         type: 'object',
         properties: {
@@ -873,14 +912,18 @@ export const swaggerDocument = {
           mobileNumber: { type: 'string' },
           firstName: { type: 'string' },
           lastName: { type: 'string' },
-          role: { type: 'string', enum: ['user', 'provider'] },
+          role: { type: 'string', enum: ['user', 'provider', 'admin'] },
+          onboarding: { $ref: '#/components/schemas/OnboardingState' },
         },
       },
       Tokens: {
         type: 'object',
         properties: {
           accessToken: { type: 'string' },
-          expiresIn: { type: 'string', example: '24h' },
+          refreshToken: { type: 'string' },
+          expiresIn: { type: 'string', example: '1h' },
+          refreshExpiresAt: { type: 'string', format: 'date-time' },
+          sessionId: { type: 'string', format: 'uuid', description: 'Same as access JWT claim sid' },
         },
       },
       AuthSuccessResponse: {
@@ -893,7 +936,29 @@ export const swaggerDocument = {
             type: 'object',
             properties: {
               user: { $ref: '#/components/schemas/UserResponse' },
-              tokens: { $ref: '#/components/schemas/Tokens' },
+              tokens: { $ref: '#/components/schemas/Tokens', description: 'Omitted until tokenEligible' },
+              onboardingToken: {
+                type: 'string',
+                description:
+                  'Provider only, before step 4: Bearer for `/providers/onboarding/*` (JWT typ=onboarding). Not a refresh session.',
+              },
+              onboardingTokenExpiresIn: { type: 'string', example: '7d' },
+            },
+          },
+        },
+      },
+      RateLimitErrorResponse: {
+        type: 'object',
+        properties: {
+          statusCode: { type: 'integer', example: 429 },
+          responseCode: { type: 'string', example: 'RATE_LIMITED' },
+          message: { type: 'string', example: 'OTP_SEND_RATE_LIMITED' },
+          data: { type: 'object', nullable: true },
+          errors: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { retryAfterSeconds: { type: 'integer' } },
             },
           },
         },
@@ -942,10 +1007,11 @@ export const swaggerDocument = {
       },
       PersonalInfoRequest: {
         type: 'object',
-        required: ['firstName', 'lastName', 'phoneNumber', 'email', 'providerType'],
+        required: ['fullName', 'phoneNumber', 'email', 'providerType'],
         properties: {
-          firstName: { type: 'string', example: 'John' },
-          lastName: { type: 'string', example: 'Doe' },
+          fullName: { type: 'string', example: 'John Doe' },
+          firstName: { type: 'string', deprecated: true, description: 'Deprecated: use fullName' },
+          lastName: { type: 'string', deprecated: true, description: 'Deprecated: ignored for provider flow' },
           phoneNumber: { type: 'string', example: '8160495306', description: '10–15 digits' },
           alternateMobileNumber: { type: 'string', example: '' },
           email: { type: 'string', format: 'email' },
@@ -964,7 +1030,9 @@ export const swaggerDocument = {
       },
       ProfessionalProfileRequest: {
         type: 'object',
-        required: ['workLocationType', 'qualification', 'experienceYears', 'workMode', 'onlineConsultationModes', 'address', 'specialization', 'availability'],
+        required: ['workLocationType', 'specialization'],
+        description:
+          'Doctor-only payload. Hospital / Institution requires hospitalInstitutionName(or id), specialization, and teamCode. Independent Practice requires qualification, experienceYears, workMode, onlineConsultationModes, address, specialization, and availability.',
         properties: {
           workLocationType: { type: 'string', enum: ['Hospital / Institution', 'Independent Practice'] },
           hospitalInstitutionId: { type: 'string' },

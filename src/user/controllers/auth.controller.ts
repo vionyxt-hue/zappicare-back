@@ -9,16 +9,39 @@ import {
   LoginSchema,
   GoogleAuthSchema,
   AppleAuthSchema,
+  RefreshTokenSchema,
   SendOtpDto,
   VerifyOtpDto,
   RegisterDto,
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
-} from '../models/auth.dto';
+  type SessionMeta,
+} from '../models/dtos/auth.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 
 const responseService = new ResponseService();
+
+function extractSessionMeta(req: Request): SessionMeta {
+  const b = req.body as Record<string, unknown>;
+  const pickStr = (k: string) =>
+    typeof b[k] === 'string' ? (b[k] as string) : undefined;
+  const pickObj = (k: string) =>
+    typeof b[k] === 'object' && b[k] !== null && !Array.isArray(b[k])
+      ? (b[k] as Record<string, unknown>)
+      : undefined;
+  return {
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent') ?? undefined,
+    fcmToken: pickStr('fcmToken'),
+    apnsToken: pickStr('apnsToken'),
+    onesignalPlayerId: pickStr('onesignalPlayerId'),
+    devicePlatform: pickStr('devicePlatform'),
+    timezone: pickStr('timezone'),
+    deviceInfo: pickObj('deviceInfo'),
+    locationInfo: pickObj('locationInfo'),
+  };
+}
 
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -73,6 +96,31 @@ export class AuthController {
     }
   };
 
+  verifyProviderOtp = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = VerifyOtpSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const message =
+          parsed.error instanceof ZodError
+            ? parsed.error.issues
+                .map((e) => `${e.path.join('.')}: ${e.message}`)
+                .join(', ')
+            : 'Validation failed';
+        res.status(400).json(responseService.badRequest(message));
+        return;
+      }
+      const result = await this.authService.verifyProviderOtp(parsed.data as VerifyOtpDto);
+      res.status(result.statusCode).json(result);
+    } catch (error) {
+      res.status(500).json(
+        responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          (error as Error).message
+        )
+      );
+    }
+  };
+
   register = async (req: Request, res: Response): Promise<void> => {
     try {
       const verifiedToken = req.headers['x-verified-token'] as string | undefined;
@@ -89,7 +137,8 @@ export class AuthController {
       }
       const result = await this.authService.register(
         parsed.data as RegisterDto,
-        verifiedToken
+        verifiedToken,
+        extractSessionMeta(req)
       );
       res.status(result.statusCode).json(result);
     } catch (error) {
@@ -115,7 +164,10 @@ export class AuthController {
         res.status(400).json(responseService.badRequest(message));
         return;
       }
-      const result = await this.authService.login(parsed.data as LoginDto);
+      const result = await this.authService.login(
+        parsed.data as LoginDto,
+        extractSessionMeta(req)
+      );
       res.status(result.statusCode).json(result);
     } catch (error) {
       res.status(500).json(
@@ -141,7 +193,8 @@ export class AuthController {
         return;
       }
       const result = await this.authService.loginWithGoogle(
-        parsed.data as GoogleAuthDto
+        parsed.data as GoogleAuthDto,
+        extractSessionMeta(req)
       );
       res.status(result.statusCode).json(result);
     } catch (error) {
@@ -168,7 +221,8 @@ export class AuthController {
         return;
       }
       const result = await this.authService.loginWithApple(
-        parsed.data as AppleAuthDto
+        parsed.data as AppleAuthDto,
+        extractSessionMeta(req)
       );
       res.status(result.statusCode).json(result);
     } catch (error) {
@@ -181,9 +235,38 @@ export class AuthController {
     }
   };
 
-  logout = async (_req: Request, res: Response): Promise<void> => {
+  refresh = async (req: Request, res: Response): Promise<void> => {
     try {
-      const result = this.authService.logout();
+      const parsed = RefreshTokenSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const message =
+          parsed.error instanceof ZodError
+            ? parsed.error.issues
+                .map((e) => `${e.path.join('.')}: ${e.message}`)
+                .join(', ')
+            : 'Validation failed';
+        res.status(400).json(responseService.badRequest(message));
+        return;
+      }
+      const result = await this.authService.refresh(parsed.data.refreshToken);
+      res.status(result.statusCode).json(result);
+    } catch (error) {
+      res.status(500).json(
+        responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          (error as Error).message
+        )
+      );
+    }
+  };
+
+  logout = async (req: RequestWithUser, res: Response): Promise<void> => {
+    try {
+      if (!req.user?.id) {
+        res.status(401).json(responseService.unauthorized('Unauthorized'));
+        return;
+      }
+      const result = await this.authService.logout(req.user.id, req.user.sessionId);
       res.status(result.statusCode).json(result);
     } catch (error) {
       res.status(500).json(

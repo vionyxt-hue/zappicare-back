@@ -7,6 +7,7 @@ import { AuthEndPoints } from '../../enums/auth.enum';
 export function createUserAuthRoutes(config: {
   jwtSecret: string;
   jwtExpiresIn: string;
+  jwtRefreshExpiresIn: string;
   bcryptRounds: number;
   googleClientId?: string;
   appleClientId?: string;
@@ -22,6 +23,7 @@ export function createUserAuthRoutes(config: {
   router.post(`/${AuthEndPoints.LOGIN}`, authController.login);
   router.post(`/${AuthEndPoints.GOOGLE}`, authController.loginWithGoogle);
   router.post(`/${AuthEndPoints.APPLE}`, authController.loginWithApple);
+  router.post(`/${AuthEndPoints.REFRESH}`, authController.refresh);
   router.post(`/${AuthEndPoints.LOGOUT}`, authMiddleware, authController.logout);
   router.get(`/${AuthEndPoints.ME}`, authMiddleware, authController.me);
 

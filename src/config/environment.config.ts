@@ -6,19 +6,31 @@ const EnvironmentSchema = z.object({
   APP_NAME: z.string().default('Zappicare Backend'),
   APP_VERSION: z.string().default('1.0.0'),
 
-  // MongoDB
-  MONGODB_URI: z.string().default('mongodb://localhost:27017/zappicare'),
+  // PostgreSQL (Knex + pg) — use DATABASE_URL **or** DB_HOST / DB_NAME / …
+  DATABASE_URL: z.string().optional(),
+  DB_HOST: z.string().default('localhost'),
+  DB_PORT: z.coerce.number().int().default(5432),
+  DB_NAME: z.string().default('zappicare'),
+  DB_USER: z.string().default('postgres'),
+  DB_PASSWORD: z.string().default('Atul16'),
+  DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  DB_MIGRATIONS_TABLE: z.string().default('knex_migrations'),
+  DB_DATA_SCHEMA: z.string().default('data'),
+  DB_AUDIT_SCHEMA: z.string().default('audit'),
+  DB_PUBLIC_SCHEMA: z.string().default('public'),
+  /** Set to `true` to enable TLS (e.g. managed Postgres). */
+  DB_SSL: z.string().optional(),
+  /** When SSL is on, set to `false` to allow self-signed certs (default matches typical cloud dev). */
+  DB_SSL_REJECT_UNAUTHORIZED: z.string().optional(),
 
   // JWT
   JWT_SECRET: z.string().min(32, 'JWT secret must be at least 32 characters'),
-  JWT_EXPIRES_IN: z.string().default('24h'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  JWT_EXPIRES_IN: z.string().default('1h'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
   // Security
   BCRYPT_ROUNDS: z.coerce.number().default(12),
-
-  // CORS
-  CORS_ORIGIN: z.string().default('http://localhost:3000'),
 
   // OAuth (optional – omit to disable)
   GOOGLE_CLIENT_ID: z.string().optional(),

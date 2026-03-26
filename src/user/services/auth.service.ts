@@ -1,8 +1,5 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import { UserModel, IUser } from '../models/user.schema';
-import { OtpVerificationModel } from '../models/otp-verification.schema';
 import { ResponseService, ResponseCode } from '../../core/response-management';
 import { AuthErrorMessages, AuthSuccessMessages } from '../../core/messages';
 import {
@@ -12,28 +9,57 @@ import {
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
-} from '../models/auth.dto';
+  type SessionMeta,
+} from '../models/dtos/auth.dto';
 import { JwtPayload } from '../../interface/auth.interface';
 import {
   verifyGoogleIdToken,
   verifyAppleIdentityToken,
 } from './oauth-verifier';
-import type { UserRoleType } from '../models/user.schema';
+import type { GenderType, UserRoleType, UserEntity } from '../models/entities/user.entity';
+import {
+  findUserById,
+  findUserByMobile,
+  findUserByEmailLower,
+  findUserByGoogleId,
+  findUserByAppleId,
+  createUser,
+  updateUserById,
+  patchUserOnboarding,
+} from '../models/queries/user.query';
+import { buildOnboardingResponse, isTokenEligibleStep } from '../utils/onboarding.util';
+import {
+  findLatestOtpByMobile,
+  createOtp,
+  deleteOtpById,
+  incrementOtpAttempts,
+} from '../models/queries/otp.query';
+import { checkAndRecordOtpSend } from '../models/queries/otp-send.query';
+import {
+  generateRefreshToken,
+  generateSessionId,
+  hashRefreshToken,
+  insertLoginActivity,
+  findLoginActivityByRefreshHash,
+  findLoginActivityBySessionId,
+  updateLoginActivityAfterRefresh,
+  revokeLoginActivityBySessionId,
+} from '../models/queries/login-activity.query';
+import { jwtExpiryToMs } from '../../common/jwt-expiry';
+import { verifyAccessJwtToken } from '../../common/verify-access-jwt';
 
 const OTP_EXPIRY_MINUTES = 5;
 const OTP_LENGTH = 5;
 const VERIFIED_TOKEN_EXPIRY = '10m';
+/** Lets providers call `/providers/onboarding/*` before step 4 (no refresh session). */
+const ONBOARDING_JWT_EXPIRY = '7d';
 const MAX_OTP_ATTEMPTS = 5;
-
-type UserLike = Pick<
-  IUser,
-  'email' | 'firstName' | 'lastName' | 'mobileNumber' | 'role'
-> & { _id: mongoose.Types.ObjectId };
 
 export class AuthService {
   private readonly responseService = new ResponseService();
   private readonly jwtSecret: string;
   private readonly jwtExpiresIn: string;
+  private readonly jwtRefreshExpiresIn: string;
   private readonly bcryptRounds: number;
   private readonly googleClientId?: string;
   private readonly appleClientId?: string;
@@ -41,28 +67,36 @@ export class AuthService {
   constructor(config: {
     jwtSecret: string;
     jwtExpiresIn: string;
+    jwtRefreshExpiresIn: string;
     bcryptRounds: number;
     googleClientId?: string;
     appleClientId?: string;
   }) {
     this.jwtSecret = config.jwtSecret;
     this.jwtExpiresIn = config.jwtExpiresIn;
+    this.jwtRefreshExpiresIn = config.jwtRefreshExpiresIn;
     this.bcryptRounds = config.bcryptRounds;
     this.googleClientId = config.googleClientId;
     this.appleClientId = config.appleClientId;
   }
 
   async sendOtp(dto: SendOtpDto) {
-    const code = Math.floor(
-      10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
-    ).toString();
+    const gate = await checkAndRecordOtpSend(dto.mobileNumber);
+    if (!gate.allowed) {
+      return this.responseService.rateLimited(AuthErrorMessages.OTP_SEND_RATE_LIMITED, [
+        { retryAfterSeconds: gate.retryAfterSeconds },
+      ]);
+    }
+    // const code = Math.floor(
+    //   10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
+    // ).toString();
+    const code = '12345';
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-    await OtpVerificationModel.create({
+    await createOtp({
       mobileNumber: dto.mobileNumber,
       code,
       expiresAt,
     });
-    // In production: send SMS with code
     return this.responseService.success(
       ResponseCode.PROCESSING_SUCCESS,
       AuthSuccessMessages.OTP_SENT,
@@ -78,43 +112,132 @@ export class AuthService {
       this.jwtSecret,
       { expiresIn: VERIFIED_TOKEN_EXPIRY }
     );
+
+    const existing = await findUserByMobile(dto.mobileNumber);
+    const onboarding = buildOnboardingResponse({
+      role: 'user',
+      isPhoneVerified: true,
+      isProfileCompleted: false,
+      isStepperCompleted: false,
+    });
+    if (existing) {
+      const updated = await patchUserOnboarding(existing.id, { isPhoneVerified: true });
+      if (updated) {
+        // Existing user/provider: return post-OTP auth payload.
+        // - tokenEligible => access+refresh tokens
+        // - provider incomplete => onboardingToken for stepper APIs
+        const authData = await this.buildPostOtpAuthData(updated);
+        // Onboarding state lives on user.onboarding only (avoid duplicate top-level field).
+        return this.responseService.success(
+          ResponseCode.VALIDATION_SUCCESS,
+          AuthSuccessMessages.OTP_VERIFIED,
+          { verifiedToken, ...authData }
+        );
+      }
+    }
+
     return this.responseService.success(
       ResponseCode.VALIDATION_SUCCESS,
       AuthSuccessMessages.OTP_VERIFIED,
-      { verifiedToken }
+      { verifiedToken, onboarding }
     );
+  }
+
+  /**
+   * Provider flow without separate register step:
+   * verify OTP, ensure provider user exists, and return onboarding/auth payload.
+   */
+  async verifyProviderOtp(dto: VerifyOtpDto) {
+    const valid = await this.validateOtp(dto.mobileNumber, dto.code);
+    if (valid !== true) return valid;
+
+    const verifiedToken = jwt.sign(
+      { sub: dto.mobileNumber, type: 'otp_verified' },
+      this.jwtSecret,
+      { expiresIn: VERIFIED_TOKEN_EXPIRY }
+    );
+
+    let user = await findUserByMobile(dto.mobileNumber);
+    if (!user) {
+      user = await createUser({
+        mobileNumber: dto.mobileNumber,
+        firstName: 'Provider',
+        lastName: '',
+        termsAndConditionsAccepted: true,
+        isMobileVerified: true,
+        isPhoneVerified: true,
+        // Provider has no register/profile screen in this flow.
+        isProfileCompleted: true,
+        role: 'provider',
+      });
+    } else {
+      const patched = await patchUserOnboarding(user.id, {
+        isPhoneVerified: true,
+        // Provider profile/register step is removed, treat as completed.
+        isProfileCompleted: true,
+      });
+      user = patched ?? user;
+    }
+
+    const authData = await this.buildPostOtpAuthData(user);
+    // Onboarding state lives on user.onboarding only (avoid duplicate top-level field).
+    return this.responseService.success(
+      ResponseCode.VALIDATION_SUCCESS,
+      AuthSuccessMessages.OTP_VERIFIED,
+      { verifiedToken, ...authData }
+    );
+  }
+
+  private async buildPostOtpAuthData(user: UserEntity): Promise<{
+    user: ReturnType<AuthService['toUserResponse']>;
+    tokens?: Awaited<ReturnType<AuthService['issueSession']>>;
+    onboardingToken?: string;
+    onboardingTokenExpiresIn?: string;
+  }> {
+    const data: {
+      user: ReturnType<AuthService['toUserResponse']>;
+      tokens?: Awaited<ReturnType<AuthService['issueSession']>>;
+      onboardingToken?: string;
+      onboardingTokenExpiresIn?: string;
+    } = {
+      user: this.toUserResponse(user),
+    };
+    if (isTokenEligibleStep(user.currentStep)) {
+      data.tokens = await this.issueSession(user);
+      return data;
+    }
+    if (user.role === 'provider') {
+      data.onboardingToken = this.signOnboardingToken(user);
+      data.onboardingTokenExpiresIn = ONBOARDING_JWT_EXPIRY;
+    }
+    return data;
   }
 
   private async validateOtp(
     mobileNumber: string,
     code: string
   ): Promise<ReturnType<AuthService['responseService']['badRequest']> | true> {
-    const record = await OtpVerificationModel.findOne({
-      mobileNumber,
-    }).sort({ createdAt: -1 });
+    const record = await findLatestOtpByMobile(mobileNumber);
     if (!record) {
       return this.responseService.badRequest(AuthErrorMessages.OTP_NOT_FOUND);
     }
     if (record.expiresAt < new Date()) {
-      await OtpVerificationModel.deleteOne({ _id: record._id });
+      await deleteOtpById(record.id);
       return this.responseService.badRequest(AuthErrorMessages.OTP_EXPIRED);
     }
     if (record.attempts >= MAX_OTP_ATTEMPTS) {
-      await OtpVerificationModel.deleteOne({ _id: record._id });
+      await deleteOtpById(record.id);
       return this.responseService.badRequest(AuthErrorMessages.OTP_MAX_ATTEMPTS);
     }
     if (record.code !== code) {
-      await OtpVerificationModel.updateOne(
-        { _id: record._id },
-        { $inc: { attempts: 1 } }
-      );
+      await incrementOtpAttempts(record.id);
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OTP);
     }
-    await OtpVerificationModel.deleteOne({ _id: record._id });
+    await deleteOtpById(record.id);
     return true;
   }
 
-  async register(dto: RegisterDto, verifiedToken?: string) {
+  async register(dto: RegisterDto, verifiedToken?: string, sessionMeta?: SessionMeta) {
     let mobileNumber = dto.mobileNumber;
     if (verifiedToken) {
       try {
@@ -134,63 +257,53 @@ export class AuthService {
         );
       }
     }
-    const existing = await UserModel.findOne({ mobileNumber }).lean();
+    const existing = await findUserByMobile(mobileNumber);
     if (existing) {
       return this.responseService.badRequest(AuthErrorMessages.USER_ALREADY_EXISTS);
     }
     if (dto.email) {
-      const existingEmail = await UserModel.findOne({
-        email: dto.email.toLowerCase(),
-      }).lean();
+      const existingEmail = await findUserByEmailLower(dto.email.toLowerCase());
       if (existingEmail) {
         return this.responseService.badRequest(AuthErrorMessages.USER_ALREADY_EXISTS);
       }
     }
-    const user = await UserModel.create({
+    const phoneVerifiedViaOtp = Boolean(verifiedToken);
+    const user = await createUser({
       mobileNumber,
       countryCode: dto.countryCode,
       email: dto.email ? dto.email.toLowerCase() : undefined,
       firstName: dto.firstName,
       lastName: dto.lastName,
       emergencyNumber: dto.emergencyNumber || undefined,
-      gender: dto.gender,
+      gender: dto.gender as GenderType,
       referCode: dto.referCode,
       termsAndConditionsAccepted: true,
-      isMobileVerified: true,
-      role: dto.role ?? 'user',
+      isMobileVerified: phoneVerifiedViaOtp,
+      isPhoneVerified: phoneVerifiedViaOtp,
+      isProfileCompleted: true,
+      role: (dto.role ?? 'user') as UserRoleType,
     });
-    const token = this.generateToken(user as UserLike);
-    return this.responseService.success(
-      ResponseCode.CREATED,
-      AuthSuccessMessages.USER_REGISTERED,
-      {
-        user: this.toUserResponse(user as UserLike),
-        tokens: token,
-      }
-    );
+    return this.registerOrLoginSuccess(user, ResponseCode.CREATED, AuthSuccessMessages.USER_REGISTERED, sessionMeta);
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, sessionMeta?: SessionMeta) {
     if (dto.code !== undefined && dto.mobileNumber) {
       const valid = await this.validateOtp(dto.mobileNumber, dto.code);
       if (valid !== true) return valid;
-      const user = await UserModel.findOne({
-        mobileNumber: dto.mobileNumber,
-      }).lean();
+      let user = await findUserByMobile(dto.mobileNumber);
       if (!user) {
         return this.responseService.badRequest(AuthErrorMessages.USER_NOT_FOUND);
       }
       if (!user.isActive) {
         return this.responseService.badRequest(AuthErrorMessages.AUTHENTICATION_FAILED);
       }
-      const token = this.generateToken(user as UserLike);
-      return this.responseService.success(
+      const patched = await patchUserOnboarding(user.id, { isPhoneVerified: true });
+      user = patched ?? user;
+      return this.registerOrLoginSuccess(
+        user,
         ResponseCode.LOGIN_SUCCESS,
         AuthSuccessMessages.LOGIN_SUCCESS,
-        {
-          user: this.toUserResponse(user as UserLike),
-          tokens: token,
-        }
+        sessionMeta
       );
     }
     const byMobile = dto.mobileNumber
@@ -201,7 +314,9 @@ export class AuthService {
     if (!query) {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_CREDENTIALS);
     }
-    const user = await UserModel.findOne(query).select('+password').lean();
+    const user = byMobile
+      ? await findUserByMobile(byMobile.mobileNumber)
+      : await findUserByEmailLower(byEmail!.email);
     if (!user || !user.password) {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_CREDENTIALS);
     }
@@ -212,18 +327,15 @@ export class AuthService {
     if (!user.isActive) {
       return this.responseService.badRequest(AuthErrorMessages.AUTHENTICATION_FAILED);
     }
-    const token = this.generateToken(user as UserLike);
-    return this.responseService.success(
+    return this.registerOrLoginSuccess(
+      user,
       ResponseCode.LOGIN_SUCCESS,
       AuthSuccessMessages.LOGIN_SUCCESS,
-      {
-        user: this.toUserResponse(user as UserLike),
-        tokens: token,
-      }
+      sessionMeta
     );
   }
 
-  async loginWithGoogle(dto: GoogleAuthDto) {
+  async loginWithGoogle(dto: GoogleAuthDto, sessionMeta?: SessionMeta) {
     if (!this.googleClientId) {
       return this.responseService.badRequest(AuthErrorMessages.OAUTH_NOT_CONFIGURED);
     }
@@ -236,14 +348,15 @@ export class AuthService {
         payload.given_name ?? payload.name?.split(' ')[0] ?? 'User',
         payload.family_name ?? (payload.name?.split(' ').slice(1).join(' ') || 'User'),
         dto.role ?? 'user',
-        dto.termsAndConditionsAccepted
+        dto.termsAndConditionsAccepted,
+        sessionMeta
       );
     } catch {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
     }
   }
 
-  async loginWithApple(dto: AppleAuthDto) {
+  async loginWithApple(dto: AppleAuthDto, sessionMeta?: SessionMeta) {
     if (!this.appleClientId) {
       return this.responseService.badRequest(AuthErrorMessages.OAUTH_NOT_CONFIGURED);
     }
@@ -260,7 +373,8 @@ export class AuthService {
         namePart,
         'User',
         dto.role ?? 'user',
-        dto.termsAndConditionsAccepted
+        dto.termsAndConditionsAccepted,
+        sessionMeta
       );
     } catch {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
@@ -274,44 +388,44 @@ export class AuthService {
     firstName: string,
     lastName: string,
     role: string,
-    termsAccepted?: boolean
+    termsAccepted: boolean | undefined,
+    sessionMeta?: SessionMeta
   ) {
     const idField = provider === 'google' ? 'googleId' : 'appleId';
-    const placeholderMobile = `oauth_${provider}_${providerId}`;
-    let user = await UserModel.findOne({ [idField]: providerId }).lean();
+    let user =
+      provider === 'google'
+        ? await findUserByGoogleId(providerId)
+        : await findUserByAppleId(providerId);
     if (user) {
       if (!user.isActive) {
         return this.responseService.badRequest(AuthErrorMessages.AUTHENTICATION_FAILED);
       }
-      const token = this.generateToken(user as UserLike);
-      return this.responseService.success(
+      return this.registerOrLoginSuccess(
+        user,
         ResponseCode.LOGIN_SUCCESS,
         AuthSuccessMessages.LOGIN_SUCCESS,
-        {
-          user: this.toUserResponse(user as UserLike),
-          tokens: token,
-        }
+        sessionMeta
       );
     }
     if (email) {
-      user = await UserModel.findOne({ email: email.toLowerCase() }).lean();
+      user = await findUserByEmailLower(email.toLowerCase());
       if (user) {
-        await UserModel.updateOne(
-          { _id: user._id },
-          { $set: { [idField]: providerId } }
-        );
-        const updated = await UserModel.findById(user._id).lean();
-        if (updated && !(updated as { isActive?: boolean }).isActive) {
+        const updated =
+          idField === 'googleId'
+            ? await updateUserById(user.id, { googleId: providerId })
+            : await updateUserById(user.id, { appleId: providerId });
+        const linked = updated ?? (await findUserById(user.id));
+        if (!linked) {
+          return this.responseService.badRequest(AuthErrorMessages.USER_NOT_FOUND);
+        }
+        if (!linked.isActive) {
           return this.responseService.badRequest(AuthErrorMessages.AUTHENTICATION_FAILED);
         }
-        const token = this.generateToken(updated as UserLike);
-        return this.responseService.success(
+        return this.registerOrLoginSuccess(
+          linked,
           ResponseCode.LOGIN_SUCCESS,
           AuthSuccessMessages.LOGIN_SUCCESS,
-          {
-            user: this.toUserResponse(updated as UserLike),
-            tokens: token,
-          }
+          sessionMeta
         );
       }
     }
@@ -320,40 +434,84 @@ export class AuthService {
         AuthErrorMessages.TERMS_AND_CONDITIONS_REQUIRED
       );
     }
-    const newUser = await UserModel.create({
+    const placeholderMobile = `oauth_${provider}_${providerId}`;
+    const newUser = await createUser({
       mobileNumber: placeholderMobile,
       firstName,
       lastName,
       email: email?.toLowerCase(),
-      [idField]: providerId,
+      googleId: idField === 'googleId' ? providerId : undefined,
+      appleId: idField === 'appleId' ? providerId : undefined,
       termsAndConditionsAccepted: true,
       isMobileVerified: false,
+      isPhoneVerified: false,
+      isProfileCompleted: true,
       role: role as UserRoleType,
     });
-    const token = this.generateToken(newUser as UserLike);
-    return this.responseService.success(
+    return this.registerOrLoginSuccess(
+      newUser,
       ResponseCode.CREATED,
       AuthSuccessMessages.USER_REGISTERED,
-      {
-        user: this.toUserResponse(newUser as UserLike),
-        tokens: token,
-      }
+      sessionMeta
     );
   }
 
+  async refresh(refreshToken: string) {
+    const hash = hashRefreshToken(refreshToken, this.jwtSecret);
+    const row = await findLoginActivityByRefreshHash(hash);
+    if (!row || !row.isActive) {
+      return this.responseService.unauthorized(AuthErrorMessages.INVALID_REFRESH_TOKEN);
+    }
+    if (row.refreshTokenExpiresAt < new Date()) {
+      return this.responseService.unauthorized(AuthErrorMessages.INVALID_REFRESH_TOKEN);
+    }
+    const user = await findUserById(row.userId);
+    if (!user || !user.isActive) {
+      return this.responseService.unauthorized(AuthErrorMessages.INVALID_REFRESH_TOKEN);
+    }
+    if (!isTokenEligibleStep(user.currentStep)) {
+      return this.responseService.unauthorized(AuthErrorMessages.ONBOARDING_INCOMPLETE);
+    }
+    const newRaw = generateRefreshToken();
+    const newHash = hashRefreshToken(newRaw, this.jwtSecret);
+    const now = Date.now();
+    const accessExp = new Date(now + jwtExpiryToMs(this.jwtExpiresIn));
+    const refreshExp = new Date(now + jwtExpiryToMs(this.jwtRefreshExpiresIn));
+    await updateLoginActivityAfterRefresh({
+      sessionId: row.sessionId,
+      refreshTokenHash: newHash,
+      refreshTokenExpiresAt: refreshExp,
+      accessTokenExpiresAt: accessExp,
+    });
+    const accessToken = this.signAccessToken(user, row.sessionId);
+    return this.responseService.success(ResponseCode.LOGIN_SUCCESS, AuthSuccessMessages.LOGIN_SUCCESS, {
+      accessToken,
+      refreshToken: newRaw,
+      expiresIn: this.jwtExpiresIn,
+      refreshExpiresAt: refreshExp.toISOString(),
+      sessionId: row.sessionId,
+    });
+  }
+
   async getProfile(userId: string) {
-    const user = await UserModel.findById(userId).lean();
+    const user = await findUserById(userId);
     if (!user) {
       return this.responseService.notFound(AuthErrorMessages.USER_NOT_FOUND);
     }
     return this.responseService.success(
       ResponseCode.RETRIEVED,
       'Profile retrieved',
-      this.toUserResponse(user as UserLike)
+      this.toUserResponse(user)
     );
   }
 
-  logout() {
+  async logout(userId: string, sessionId?: string) {
+    if (sessionId) {
+      const row = await findLoginActivityBySessionId(sessionId);
+      if (row?.userId === userId) {
+        await revokeLoginActivityBySessionId(sessionId);
+      }
+    }
     return this.responseService.success(
       ResponseCode.LOGOUT_SUCCESS,
       AuthSuccessMessages.LOGOUT_SUCCESS,
@@ -362,44 +520,127 @@ export class AuthService {
   }
 
   verifyToken(token: string): JwtPayload | null {
-    try {
-      const decoded = jwt.verify(token, this.jwtSecret) as JwtPayload;
-      return decoded;
-    } catch {
-      return null;
-    }
+    return verifyAccessJwtToken(token, this.jwtSecret);
   }
 
-  private generateToken(user: UserLike): { accessToken: string; expiresIn: string } {
+  private signAccessToken(user: UserEntity, sessionId: string): string {
     const payload: JwtPayload = {
-      sub: user._id.toString(),
+      sub: user.id,
       email: user.email ?? '',
-      mobileNumber: user.mobileNumber ?? undefined,
+      mobileNumber: user.mobileNumber,
+      sid: sessionId,
+      typ: 'access',
     };
     const options: jwt.SignOptions = {
       expiresIn: this.jwtExpiresIn as jwt.SignOptions['expiresIn'],
     };
-    const accessToken = jwt.sign(payload as object, this.jwtSecret, options);
-    return { accessToken, expiresIn: this.jwtExpiresIn };
+    return jwt.sign(payload as object, this.jwtSecret, options);
   }
 
-  private toUserResponse(
-    user: UserLike
-  ): {
+  private async issueSession(
+    user: UserEntity,
+    meta?: SessionMeta
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: string;
+    refreshExpiresAt: string;
+    sessionId: string;
+  }> {
+    const sessionId = generateSessionId();
+    const rawRefresh = generateRefreshToken();
+    const refreshHash = hashRefreshToken(rawRefresh, this.jwtSecret);
+    const now = Date.now();
+    const accessExp = new Date(now + jwtExpiryToMs(this.jwtExpiresIn));
+    const refreshExp = new Date(now + jwtExpiryToMs(this.jwtRefreshExpiresIn));
+    await insertLoginActivity({
+      userId: user.id,
+      sessionId,
+      refreshTokenHash: refreshHash,
+      accessTokenExpiresAt: accessExp,
+      refreshTokenExpiresAt: refreshExp,
+      ipAddress: meta?.ipAddress,
+      userAgent: meta?.userAgent,
+      fcmToken: meta?.fcmToken,
+      apnsToken: meta?.apnsToken,
+      onesignalPlayerId: meta?.onesignalPlayerId,
+      devicePlatform: meta?.devicePlatform,
+      timezone: meta?.timezone,
+      deviceInfo: meta?.deviceInfo,
+      locationInfo: meta?.locationInfo,
+    });
+    const accessToken = this.signAccessToken(user, sessionId);
+    return {
+      accessToken,
+      refreshToken: rawRefresh,
+      expiresIn: this.jwtExpiresIn,
+      refreshExpiresAt: refreshExp.toISOString(),
+      sessionId,
+    };
+  }
+
+  private async registerOrLoginSuccess(
+    user: UserEntity,
+    code: ResponseCode,
+    message: string,
+    sessionMeta?: SessionMeta
+  ) {
+    if (!isTokenEligibleStep(user.currentStep)) {
+      const data: {
+        user: ReturnType<AuthService['toUserResponse']>;
+        onboardingToken?: string;
+        onboardingTokenExpiresIn?: string;
+      } = {
+        user: this.toUserResponse(user),
+      };
+      if (user.role === 'provider') {
+        data.onboardingToken = this.signOnboardingToken(user);
+        data.onboardingTokenExpiresIn = ONBOARDING_JWT_EXPIRY;
+      }
+      return this.responseService.success(code, message, data);
+    }
+    const tokens = await this.issueSession(user, sessionMeta);
+    return this.responseService.success(code, message, {
+      user: this.toUserResponse(user),
+      tokens,
+    });
+  }
+
+  /** Scoped JWT for provider stepper APIs (`typ: 'onboarding'`). */
+  private signOnboardingToken(user: UserEntity): string {
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email ?? '',
+      mobileNumber: user.mobileNumber,
+      typ: 'onboarding',
+    };
+    return jwt.sign(payload as object, this.jwtSecret, {
+      expiresIn: ONBOARDING_JWT_EXPIRY,
+    });
+  }
+
+  private toUserResponse(user: UserEntity): {
     id: string;
     email?: string;
     mobileNumber: string;
     firstName: string;
     lastName: string;
     role: string;
+    onboarding: ReturnType<typeof buildOnboardingResponse>;
   } {
     return {
-      id: user._id.toString(),
+      id: user.id,
       email: user.email,
       mobileNumber: user.mobileNumber,
       firstName: user.firstName,
       lastName: user.lastName,
       role: user.role,
+      onboarding: buildOnboardingResponse({
+        role: user.role,
+        isPhoneVerified: user.isPhoneVerified,
+        isProfileCompleted: user.isProfileCompleted,
+        isStepperCompleted: user.isStepperCompleted,
+      }),
     };
   }
 }

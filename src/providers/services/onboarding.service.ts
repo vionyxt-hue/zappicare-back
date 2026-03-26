@@ -1,12 +1,22 @@
-import mongoose from 'mongoose';
-import { ProviderModel } from '../models/provider.schema';
-import { ProviderDocumentModel } from '../models/provider-document.schema';
-import { UserModel } from '../../user/models/user.schema';
-import { ProviderPaymentDetailModel } from '../models/provider-payment-detail.schema';
-import { HospitalModel } from '../models/hospital.schema';
-import { SpecializationModel } from '../models/specialization.schema';
+import {
+  findUserById,
+  patchUserOnboarding,
+  updateUserById,
+} from '../../user/models/queries/user.query';
+import {
+  findProviderByUserId,
+  findProviderIdByUserId,
+  insertProvider,
+  saveProvider,
+  upsertProviderDocument,
+  findProviderDocumentsByProviderId,
+  upsertProviderPaymentDetail,
+  findPaymentDetailByProviderId,
+  findActiveHospitals,
+  findActiveSpecializations,
+} from '../models/queries/provider.query';
 import { ResponseService, ResponseCode } from '../../core/response-management';
-import type { IProviderDocument } from '../models/provider-document.schema';
+import type { IProviderDocument } from '../models/entities/provider-document.entity';
 import type {
   PersonalInfoDto,
   ProfessionalProfileDto,
@@ -16,7 +26,7 @@ import type {
   AmbulanceProfessionalDetailsDto,
   NurseProfessionalDetailsDto,
   HospitalProfessionalDetailsDto,
-} from '../models/onboarding.dto';
+} from '../models/dtos/onboarding.dto';
 import type {
   IProvider,
   IProfessionalProfile,
@@ -25,85 +35,136 @@ import type {
   IAmbulanceProfessionalDetails,
   INurseProfessionalDetails,
   IHospitalProfessionalDetails,
-} from '../models/provider.schema';
+} from '../models/entities/provider.entity';
 import type {
   ProviderTypeValue,
   GenderType,
   WorkLocationTypeValue,
   WorkModeValue,
   OnlineConsultationModeValue,
-  DayOfWeekValue,
-} from '../models/enums';
+} from '../enums/provider.enum';
 import {
   LabService,
   AmbulanceType,
   CoverageArea,
   NurseService,
   HospitalDepartment,
-} from '../models/enums';
+} from '../enums/provider.enum';
 
 const responseService = new ResponseService();
 
+const REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE: Record<
+  ProviderTypeValue,
+  Array<IProviderDocument['documentType']>
+> = {
+  Doctor: [
+    'medicalRegistrationNumber',
+    'medicalRegistrationCertificate',
+    'qualificationProof',
+    'governmentId',
+    'profilePicture',
+  ],
+  'Nurse/Caretaker': ['qualificationProof', 'governmentId', 'profilePicture'],
+  Labs: ['licenseCertificate', 'labEntrancePhoto', 'governmentId', 'profilePicture'],
+  Ambulance: ['vehicleRegistrationPapers', 'driverLicense', 'governmentId', 'profilePicture'],
+  'Hospital/Institution': ['hospitalLicense', 'governmentId', 'profilePicture'],
+};
+
 export class ProviderOnboardingService {
+  private ensureProfileArray(provider: IProvider): void {
+    if (!Array.isArray(provider.professionalProfiles)) {
+      provider.professionalProfiles = [];
+    }
+  }
+
+  private ensureProfessionalDetailsByType(provider: IProvider): string | null {
+    switch (provider.personalInfo.providerType) {
+      case 'Doctor':
+        return provider.professionalProfiles.length > 0
+          ? null
+          : 'Doctor professional profile is required';
+      case 'Nurse/Caretaker':
+        return provider.nurseProfessionalDetails
+          ? null
+          : 'Nurse professional details are required';
+      case 'Labs':
+        return provider.labProfessionalDetails
+          ? null
+          : 'Lab professional details are required';
+      case 'Ambulance':
+        return provider.ambulanceProfessionalDetails
+          ? null
+          : 'Ambulance professional details are required';
+      case 'Hospital/Institution':
+        return provider.hospitalProfessionalDetails
+          ? null
+          : 'Hospital professional details are required';
+      default:
+        return 'Provider type is required';
+    }
+  }
+
+  private missingDocumentTypes(
+    providerType: ProviderTypeValue,
+    docs: IProviderDocument[]
+  ): Array<IProviderDocument['documentType']> {
+    const required = REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE[providerType] ?? [];
+    const available = new Set(docs.map((d) => d.documentType));
+    return required.filter((docType) => !available.has(docType));
+  }
+
   async getProvider(userId: string): Promise<IProvider | null> {
-    return ProviderModel.findOne({ userId: new mongoose.Types.ObjectId(userId) });
+    return findProviderByUserId(userId);
   }
 
-  async getProviderByUserId(userId: string) {
-    const provider = await ProviderModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
-    }).lean();
-    return provider;
+  async getProviderByUserId(userId: string): Promise<IProvider | null> {
+    return findProviderByUserId(userId);
   }
 
-  /** Returns provider _id for the given user (for S3 key prefix, etc.). */
-  async getProviderIdByUserId(userId: string): Promise<mongoose.Types.ObjectId | null> {
-    const doc = await ProviderModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
-    })
-      .select('_id')
-      .lean();
-    return doc?._id ?? null;
+  /** Returns provider id for the given user (for S3 key prefix, etc.). */
+  async getProviderIdByUserId(userId: string): Promise<string | null> {
+    return findProviderIdByUserId(userId);
   }
 
   async submitPersonalInfo(userId: string, dto: PersonalInfoDto) {
-    const existing = await this.getProvider(userId);
+    const existing = await findProviderByUserId(userId);
     let provider: IProvider;
+    const fullName = dto.fullName.trim();
 
     if (existing) {
       existing.personalInfo = {
-        firstName: dto.firstName ?? existing.personalInfo.firstName,
-        lastName: dto.lastName ?? existing.personalInfo.lastName,
+        firstName: fullName,
+        lastName: '',
         phoneNumber: dto.phoneNumber ?? existing.personalInfo.phoneNumber,
-        alternateMobileNumber: dto.alternateMobileNumber ?? existing.personalInfo.alternateMobileNumber,
+        alternateMobileNumber:
+          dto.alternateMobileNumber ?? existing.personalInfo.alternateMobileNumber,
         email: (dto.email ?? existing.personalInfo.email).toLowerCase(),
         providerType: (dto.providerType as ProviderTypeValue) ?? existing.personalInfo.providerType,
         gender: (dto.gender as GenderType | undefined) ?? existing.personalInfo.gender,
       };
       existing.onboardingStep = 'professional_details';
-      await existing.save();
+      await saveProvider(existing);
       provider = existing;
     } else {
-      const user = await UserModel.findById(userId).lean();
+      const user = await findUserById(userId);
       if (!user) return responseService.notFound('User not found');
       const email = (dto.email ?? user.email)?.toLowerCase();
       if (!email) return responseService.badRequest('Email is required');
-      provider = await ProviderModel.create({
-        userId: new mongoose.Types.ObjectId(userId),
+      provider = await insertProvider({
+        userId,
         personalInfo: {
-          firstName: dto.firstName ?? user.firstName,
-          lastName: dto.lastName ?? user.lastName,
+          firstName: fullName,
+          lastName: '',
           phoneNumber: dto.phoneNumber ?? user.mobileNumber,
           alternateMobileNumber: dto.alternateMobileNumber || undefined,
           email,
           providerType: dto.providerType as ProviderTypeValue,
           gender: (dto.gender as GenderType | undefined) ?? user.gender,
         },
-        professionalProfiles: [],
         onboardingStep: 'professional_details',
-        verificationStatus: 'pending',
       });
     }
+    await updateUserById(userId, { firstName: fullName, lastName: '' });
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -114,14 +175,18 @@ export class ProviderOnboardingService {
   }
 
   async addProfessionalProfile(userId: string, dto: ProfessionalProfileDto) {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
+    if (provider.personalInfo.providerType !== 'Doctor') {
+      return responseService.badRequest(
+        'Professional profile endpoint is only for Doctor provider type'
+      );
+    }
+    this.ensureProfileArray(provider);
 
     const profile: IProfessionalProfile = {
       workLocationType: dto.workLocationType as WorkLocationTypeValue,
-      hospitalInstitutionId: dto.hospitalInstitutionId
-        ? new mongoose.Types.ObjectId(dto.hospitalInstitutionId)
-        : undefined,
+      hospitalInstitutionId: dto.hospitalInstitutionId || undefined,
       hospitalInstitutionName: dto.hospitalInstitutionName,
       teamCode: dto.teamCode,
       qualification: dto.qualification,
@@ -135,7 +200,7 @@ export class ProviderOnboardingService {
 
     provider.professionalProfiles.push(profile);
     provider.onboardingStep = 'professional_details';
-    await provider.save();
+    await saveProvider(provider);
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -150,21 +215,16 @@ export class ProviderOnboardingService {
     profileIndex: number,
     dto: ProfessionalProfileDto
   ) {
-    const provider = await this.getProviderByUserId(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Provider not found');
 
-    const doc = await ProviderModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
-    });
-    if (!doc || !doc.professionalProfiles[profileIndex]) {
+    if (!provider.professionalProfiles[profileIndex]) {
       return responseService.notFound('Professional profile not found');
     }
 
-    doc.professionalProfiles[profileIndex] = {
+    provider.professionalProfiles[profileIndex] = {
       workLocationType: dto.workLocationType as WorkLocationTypeValue,
-      hospitalInstitutionId: dto.hospitalInstitutionId
-        ? new mongoose.Types.ObjectId(dto.hospitalInstitutionId)
-        : undefined,
+      hospitalInstitutionId: dto.hospitalInstitutionId || undefined,
       hospitalInstitutionName: dto.hospitalInstitutionName,
       teamCode: dto.teamCode,
       qualification: dto.qualification,
@@ -175,9 +235,9 @@ export class ProviderOnboardingService {
       specialization: dto.specialization,
       availability: dto.availability as IAvailabilitySlot[],
     };
-    await doc.save();
+    await saveProvider(provider);
 
-    const response = await this.toProviderResponse(doc);
+    const response = await this.toProviderResponse(provider);
     return responseService.success(
       ResponseCode.UPDATED,
       'Professional profile updated',
@@ -186,7 +246,7 @@ export class ProviderOnboardingService {
   }
 
   async submitLabProfessionalDetails(userId: string, dto: LabProfessionalDetailsDto) {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
     if (provider.personalInfo.providerType !== 'Labs') {
       return responseService.badRequest('Lab professional details are only for Labs provider type');
@@ -197,9 +257,7 @@ export class ProviderOnboardingService {
       labName: dto.labName,
       registrationCertificationNumber: dto.registrationCertificationNumber,
       address: dto.address,
-      hospitalInstitutionId: dto.hospitalInstitutionId
-        ? new mongoose.Types.ObjectId(dto.hospitalInstitutionId)
-        : undefined,
+      hospitalInstitutionId: dto.hospitalInstitutionId || undefined,
       hospitalInstitutionName: dto.hospitalInstitutionName,
       teamCode: dto.teamCode,
       services: dto.services,
@@ -208,7 +266,7 @@ export class ProviderOnboardingService {
 
     provider.labProfessionalDetails = labDetails;
     provider.onboardingStep = 'professional_details';
-    await provider.save();
+    await saveProvider(provider);
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -222,7 +280,7 @@ export class ProviderOnboardingService {
     userId: string,
     dto: AmbulanceProfessionalDetailsDto
   ) {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
     if (provider.personalInfo.providerType !== 'Ambulance') {
       return responseService.badRequest(
@@ -238,16 +296,14 @@ export class ProviderOnboardingService {
       ambulanceType: dto.ambulanceType,
       coverageArea: dto.coverageArea,
       availabilityHours: dto.availabilityHours,
-      hospitalInstitutionId: dto.hospitalInstitutionId
-        ? new mongoose.Types.ObjectId(dto.hospitalInstitutionId)
-        : undefined,
+      hospitalInstitutionId: dto.hospitalInstitutionId || undefined,
       hospitalInstitutionName: dto.hospitalInstitutionName,
       teamCode: dto.teamCode,
     };
 
     provider.ambulanceProfessionalDetails = ambulanceDetails;
     provider.onboardingStep = 'professional_details';
-    await provider.save();
+    await saveProvider(provider);
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -258,7 +314,7 @@ export class ProviderOnboardingService {
   }
 
   async submitNurseProfessionalDetails(userId: string, dto: NurseProfessionalDetailsDto) {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
     if (provider.personalInfo.providerType !== 'Nurse/Caretaker') {
       return responseService.badRequest(
@@ -272,16 +328,14 @@ export class ProviderOnboardingService {
       services: dto.services,
       coverageArea: dto.coverageArea,
       availability: dto.availability as IAvailabilitySlot[],
-      hospitalInstitutionId: dto.hospitalInstitutionId
-        ? new mongoose.Types.ObjectId(dto.hospitalInstitutionId)
-        : undefined,
+      hospitalInstitutionId: dto.hospitalInstitutionId || undefined,
       hospitalInstitutionName: dto.hospitalInstitutionName,
       teamCode: dto.teamCode,
     };
 
     provider.nurseProfessionalDetails = nurseDetails;
     provider.onboardingStep = 'professional_details';
-    await provider.save();
+    await saveProvider(provider);
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -295,7 +349,7 @@ export class ProviderOnboardingService {
     userId: string,
     dto: HospitalProfessionalDetailsDto
   ) {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
     if (provider.personalInfo.providerType !== 'Hospital/Institution') {
       return responseService.badRequest(
@@ -312,7 +366,7 @@ export class ProviderOnboardingService {
 
     provider.hospitalProfessionalDetails = hospitalDetails;
     provider.onboardingStep = 'professional_details';
-    await provider.save();
+    await saveProvider(provider);
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(
@@ -322,8 +376,8 @@ export class ProviderOnboardingService {
     );
   }
 
-  private async upsertProviderDocument(
-    providerId: mongoose.Types.ObjectId,
+  private async upsertDoc(
+    providerId: string,
     documentType: string,
     data: {
       url?: string;
@@ -333,26 +387,17 @@ export class ProviderOnboardingService {
       metadata?: Record<string, unknown>;
     }
   ): Promise<void> {
-    await ProviderDocumentModel.findOneAndUpdate(
-      { providerId, documentType },
-      { $set: data },
-      { upsert: true, new: true }
-    );
+    await upsertProviderDocument(providerId, documentType as IProviderDocument['documentType'], data);
   }
 
   async submitDocuments(userId: string, dto: DocumentsDto) {
-    const provider = await this.getProviderByUserId(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Provider not found');
 
-    const doc = await ProviderModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
-    });
-    if (!doc) return responseService.notFound('Provider not found');
-
-    const providerId = doc._id;
+    const providerId = provider.id;
 
     if (dto.medicalRegistrationNumber != null) {
-      await this.upsertProviderDocument(providerId, 'medicalRegistrationNumber', {
+      await this.upsertDoc(providerId, 'medicalRegistrationNumber', {
         documentNumber: dto.medicalRegistrationNumber,
       });
     }
@@ -361,7 +406,7 @@ export class ProviderOnboardingService {
       dto.medicalRegistrationCertificateFileName != null &&
       dto.medicalRegistrationCertificateFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'medicalRegistrationCertificate', {
+      await this.upsertDoc(providerId, 'medicalRegistrationCertificate', {
         url: dto.medicalRegistrationCertificateUrl,
         fileName: dto.medicalRegistrationCertificateFileName,
         fileSize: dto.medicalRegistrationCertificateFileSize,
@@ -372,7 +417,7 @@ export class ProviderOnboardingService {
       dto.qualificationProofFileName != null &&
       dto.qualificationProofFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'qualificationProof', {
+      await this.upsertDoc(providerId, 'qualificationProof', {
         url: dto.qualificationProofUrl,
         fileName: dto.qualificationProofFileName,
         fileSize: dto.qualificationProofFileSize,
@@ -383,7 +428,7 @@ export class ProviderOnboardingService {
       dto.governmentIdFileName != null &&
       dto.governmentIdFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'governmentId', {
+      await this.upsertDoc(providerId, 'governmentId', {
         url: dto.governmentIdUrl,
         fileName: dto.governmentIdFileName,
         fileSize: dto.governmentIdFileSize,
@@ -395,7 +440,7 @@ export class ProviderOnboardingService {
       dto.profilePictureFileName != null &&
       dto.profilePictureFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'profilePicture', {
+      await this.upsertDoc(providerId, 'profilePicture', {
         url: dto.profilePictureUrl,
         fileName: dto.profilePictureFileName,
         fileSize: dto.profilePictureFileSize,
@@ -406,7 +451,7 @@ export class ProviderOnboardingService {
       dto.licenseCertificateFileName != null &&
       dto.licenseCertificateFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'licenseCertificate', {
+      await this.upsertDoc(providerId, 'licenseCertificate', {
         url: dto.licenseCertificateUrl,
         fileName: dto.licenseCertificateFileName,
         fileSize: dto.licenseCertificateFileSize,
@@ -417,7 +462,7 @@ export class ProviderOnboardingService {
       dto.labEntrancePhotoFileName != null &&
       dto.labEntrancePhotoFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'labEntrancePhoto', {
+      await this.upsertDoc(providerId, 'labEntrancePhoto', {
         url: dto.labEntrancePhotoUrl,
         fileName: dto.labEntrancePhotoFileName,
         fileSize: dto.labEntrancePhotoFileSize,
@@ -428,7 +473,7 @@ export class ProviderOnboardingService {
       dto.vehicleRegistrationPapersFileName != null &&
       dto.vehicleRegistrationPapersFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'vehicleRegistrationPapers', {
+      await this.upsertDoc(providerId, 'vehicleRegistrationPapers', {
         url: dto.vehicleRegistrationPapersUrl,
         fileName: dto.vehicleRegistrationPapersFileName,
         fileSize: dto.vehicleRegistrationPapersFileSize,
@@ -439,7 +484,7 @@ export class ProviderOnboardingService {
       dto.driverLicenseFileName != null &&
       dto.driverLicenseFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'driverLicense', {
+      await this.upsertDoc(providerId, 'driverLicense', {
         url: dto.driverLicenseUrl,
         fileName: dto.driverLicenseFileName,
         fileSize: dto.driverLicenseFileSize,
@@ -450,7 +495,7 @@ export class ProviderOnboardingService {
       dto.hospitalLicenseFileName != null &&
       dto.hospitalLicenseFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'hospitalLicense', {
+      await this.upsertDoc(providerId, 'hospitalLicense', {
         url: dto.hospitalLicenseUrl,
         fileName: dto.hospitalLicenseFileName,
         fileSize: dto.hospitalLicenseFileSize,
@@ -461,17 +506,28 @@ export class ProviderOnboardingService {
       dto.hospitalLogoFileName != null &&
       dto.hospitalLogoFileSize != null
     ) {
-      await this.upsertProviderDocument(providerId, 'hospitalLogo', {
+      await this.upsertDoc(providerId, 'hospitalLogo', {
         url: dto.hospitalLogoUrl,
         fileName: dto.hospitalLogoFileName,
         fileSize: dto.hospitalLogoFileSize,
       });
     }
 
-    doc.onboardingStep = 'documents';
-    await doc.save();
+    const docsAfterSave = await findProviderDocumentsByProviderId(providerId);
+    const missingDocs = this.missingDocumentTypes(
+      provider.personalInfo.providerType,
+      docsAfterSave
+    );
+    if (missingDocs.length > 0) {
+      return responseService.badRequest(
+        `Missing required documents for ${provider.personalInfo.providerType}: ${missingDocs.join(', ')}`
+      );
+    }
 
-    const response = await this.toProviderResponse(doc);
+    provider.onboardingStep = 'documents';
+    await saveProvider(provider);
+
+    const response = await this.toProviderResponse(provider);
     return responseService.success(
       ResponseCode.UPDATED,
       'Documents saved',
@@ -480,33 +536,35 @@ export class ProviderOnboardingService {
   }
 
   async submitBankDetails(userId: string, dto: BankDetailsDto) {
-    const provider = await this.getProviderByUserId(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Provider not found');
+    const professionalDetailsError = this.ensureProfessionalDetailsByType(provider);
+    if (professionalDetailsError) {
+      return responseService.badRequest(professionalDetailsError);
+    }
+    const docRows = await findProviderDocumentsByProviderId(provider.id);
+    const missingDocs = this.missingDocumentTypes(provider.personalInfo.providerType, docRows);
+    if (missingDocs.length > 0) {
+      return responseService.badRequest(
+        `Upload required documents before bank details: ${missingDocs.join(', ')}`
+      );
+    }
 
-    const doc = await ProviderModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
+    await upsertProviderPaymentDetail(provider.id, {
+      accountHolderName: dto.accountHolderName,
+      bankAccountNumber: dto.bankAccountNumber,
+      ifsc: dto.ifsc,
+      upiId: dto.upiId,
+      gstNumber: dto.gstNumber,
     });
-    if (!doc) return responseService.notFound('Provider not found');
 
-    await ProviderPaymentDetailModel.findOneAndUpdate(
-      { providerId: doc._id },
-      {
-        $set: {
-          accountHolderName: dto.accountHolderName,
-          bankAccountNumber: dto.bankAccountNumber,
-          ifsc: dto.ifsc,
-          upiId: dto.upiId,
-          gstNumber: dto.gstNumber,
-        },
-      },
-      { upsert: true, new: true }
-    );
+    provider.onboardingStep = 'submitted';
+    provider.verificationStatus = 'pending';
+    await saveProvider(provider);
 
-    doc.onboardingStep = 'submitted';
-    doc.verificationStatus = 'pending';
-    await doc.save();
+    await patchUserOnboarding(userId, { isStepperCompleted: true });
 
-    const response = await this.toProviderResponse(doc);
+    const response = await this.toProviderResponse(provider);
     return responseService.success(
       ResponseCode.UPDATED,
       'Profile submitted for verification. Once approved, you can start booking & earning.',
@@ -517,13 +575,13 @@ export class ProviderOnboardingService {
   async getProviderResponseByUserId(
     userId: string
   ): Promise<Record<string, unknown> | null> {
-    const provider = await this.getProvider(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) return null;
     return this.toProviderResponse(provider);
   }
 
   async getOnboardingStatus(userId: string) {
-    const provider = await this.getProviderByUserId(userId);
+    const provider = await findProviderByUserId(userId);
     if (!provider) {
       return responseService.success(ResponseCode.RETRIEVED, 'Onboarding not started', {
         onboardingStep: 'personal_info',
@@ -531,7 +589,7 @@ export class ProviderOnboardingService {
         provider: null,
       });
     }
-    const providerResponse = await this.toProviderResponse(provider as unknown as IProvider);
+    const providerResponse = await this.toProviderResponse(provider);
     return responseService.success(
       ResponseCode.RETRIEVED,
       'Onboarding status retrieved',
@@ -544,9 +602,7 @@ export class ProviderOnboardingService {
   }
 
   async getHospitals() {
-    const hospitals = await HospitalModel.find({ isActive: true })
-      .select('name')
-      .lean();
+    const hospitals = await findActiveHospitals();
     return responseService.success(
       ResponseCode.RETRIEVED,
       'Hospitals retrieved',
@@ -555,9 +611,7 @@ export class ProviderOnboardingService {
   }
 
   async getSpecializations() {
-    const specializations = await SpecializationModel.find({ isActive: true })
-      .select('name')
-      .lean();
+    const specializations = await findActiveSpecializations();
     return responseService.success(
       ResponseCode.RETRIEVED,
       'Specializations retrieved',
@@ -636,12 +690,12 @@ export class ProviderOnboardingService {
   }
 
   private async toProviderResponse(provider: IProvider): Promise<Record<string, unknown>> {
-    const providerId = provider._id;
+    const providerId = provider.id;
     const [docRows, paymentDetail] = await Promise.all([
-      ProviderDocumentModel.find({ providerId }).lean(),
-      ProviderPaymentDetailModel.findOne({ providerId }).lean(),
+      findProviderDocumentsByProviderId(providerId),
+      findPaymentDetailByProviderId(providerId),
     ]);
-    const documents = this.buildDocumentsFromRows(docRows as unknown as IProviderDocument[]);
+    const documents = this.buildDocumentsFromRows(docRows);
     const bankDetails = paymentDetail
       ? {
           accountHolderName: paymentDetail.accountHolderName,
@@ -652,8 +706,8 @@ export class ProviderOnboardingService {
         }
       : undefined;
     return {
-      id: provider._id.toString(),
-      userId: provider.userId.toString(),
+      id: provider.id,
+      userId: provider.userId,
       personalInfo: provider.personalInfo,
       professionalProfiles: provider.professionalProfiles,
       labProfessionalDetails: provider.labProfessionalDetails,
