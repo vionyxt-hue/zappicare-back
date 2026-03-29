@@ -155,7 +155,7 @@ export class ProviderOnboardingService {
         personalInfo: {
           firstName: fullName,
           lastName: '',
-          phoneNumber: dto.phoneNumber ?? user.mobileNumber,
+          phoneNumber: dto.phoneNumber ?? user.mobileNumber ?? '',
           alternateMobileNumber: dto.alternateMobileNumber || undefined,
           email,
           providerType: dto.providerType as ProviderTypeValue,

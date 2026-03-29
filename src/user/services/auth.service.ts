@@ -49,7 +49,6 @@ import {
 } from '../models/queries/login-activity.query';
 import { jwtExpiryToMs } from '../../common/jwt-expiry';
 import { verifyAccessJwtToken } from '../../common/verify-access-jwt';
-import { createHash } from 'crypto';
 
 const OTP_EXPIRY_MINUTES = 5;
 const OTP_LENGTH = 5; // used for OTP generation
@@ -58,10 +57,15 @@ const VERIFIED_TOKEN_EXPIRY = '10m';
 const ONBOARDING_JWT_EXPIRY = '7d';
 const MAX_OTP_ATTEMPTS = 5;
 
-function buildOAuthPlaceholderMobile(provider: string, providerId: string): string {
-  // `users.mobile_number` is varchar(32); keep this deterministic + unique within 32 chars.
-  const hash = createHash('sha256').update(`${provider}:${providerId}`).digest('hex');
-  return `oauth_${provider}_${hash.slice(0, 24)}`; // 5 + provider + 1 + 24 <= 32 for google/apple/facebook
+/** OAuth email is treated as verified when the provider says so (or Facebook returns email on a valid user token). */
+function oauthMarksEmailVerified(
+  provider: 'google' | 'apple' | 'facebook',
+  email: string | undefined,
+  raw?: boolean | string
+): boolean {
+  if (!email?.trim()) return false;
+  if (provider === 'facebook') return true;
+  return raw === true || raw === 'true';
 }
 
 export class AuthService {
@@ -131,6 +135,7 @@ export class AuthService {
     const onboarding = buildOnboardingResponse({
       role: 'user',
       isPhoneVerified: true,
+      isEmailVerified: false,
       isProfileCompleted: false,
       isStepperCompleted: false,
     });
@@ -359,14 +364,14 @@ export class AuthService {
         'google',
         payload.sub,
         payload.email,
+        oauthMarksEmailVerified('google', payload.email, payload.email_verified),
         payload.given_name ?? payload.name?.split(' ')[0] ?? 'User',
         payload.family_name ?? (payload.name?.split(' ').slice(1).join(' ') || 'User'),
         dto.role ?? 'user',
         dto.termsAndConditionsAccepted,
         sessionMeta
       );
-    } catch (error ) {
-      console.log('error', error);
+    } catch {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
     }
   }
@@ -385,6 +390,7 @@ export class AuthService {
         'apple',
         payload.sub,
         payload.email,
+        oauthMarksEmailVerified('apple', payload.email, payload.email_verified),
         namePart,
         'User',
         dto.role ?? 'user',
@@ -410,6 +416,7 @@ export class AuthService {
           'google',
           payload.sub,
           payload.email,
+          oauthMarksEmailVerified('google', payload.email, payload.email_verified),
           payload.given_name ?? payload.name?.split(' ')[0] ?? 'User',
           payload.family_name ?? (payload.name?.split(' ').slice(1).join(' ') || 'User'),
           dto.role ?? 'user',
@@ -428,6 +435,7 @@ export class AuthService {
           'apple',
           payload.sub,
           payload.email,
+          oauthMarksEmailVerified('apple', payload.email, payload.email_verified),
           namePart,
           'User',
           dto.role ?? 'user',
@@ -451,14 +459,14 @@ export class AuthService {
         'facebook',
         fb.id,
         fb.email,
+        oauthMarksEmailVerified('facebook', fb.email, undefined),
         firstName,
         lastName,
         dto.role ?? 'user',
         dto.termsAndConditionsAccepted,
         sessionMeta
       );
-    } catch (error) {
-      console.log('error', error);
+    } catch {
       return this.responseService.badRequest(AuthErrorMessages.INVALID_OAUTH_TOKEN);
     }
   }
@@ -467,6 +475,7 @@ export class AuthService {
     provider: 'google' | 'apple' | 'facebook',
     providerId: string,
     email: string | undefined,
+    oauthEmailVerified: boolean,
     firstName: string,
     lastName: string,
     role: string,
@@ -521,9 +530,11 @@ export class AuthService {
         AuthErrorMessages.TERMS_AND_CONDITIONS_REQUIRED
       );
     }
-    const placeholderMobile = buildOAuthPlaceholderMobile(provider, providerId);
+    const roleTyped = role as UserRoleType;
+    const isProvider = roleTyped === 'provider';
+    // No placeholder mobile: OAuth users may have null phone; onboarding uses verified email + flags.
     const newUser = await createUser({
-      mobileNumber: placeholderMobile,
+      mobileNumber: null,
       firstName,
       lastName,
       email: email?.toLowerCase(),
@@ -533,8 +544,10 @@ export class AuthService {
       termsAndConditionsAccepted: true,
       isMobileVerified: false,
       isPhoneVerified: false,
+      isEmailVerified: oauthEmailVerified,
       isProfileCompleted: true,
-      role: role as UserRoleType,
+      isStepperCompleted: isProvider ? false : true,
+      role: roleTyped,
     });
     return this.registerOrLoginSuccess(
       newUser,
@@ -615,7 +628,7 @@ export class AuthService {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email ?? '',
-      mobileNumber: user.mobileNumber,
+      mobileNumber: user.mobileNumber ?? '',
       sid: sessionId,
       typ: 'access',
     };
@@ -699,7 +712,7 @@ export class AuthService {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email ?? '',
-      mobileNumber: user.mobileNumber,
+      mobileNumber: user.mobileNumber ?? '',
       typ: 'onboarding',
     };
     return jwt.sign(payload as object, this.jwtSecret, {
@@ -710,7 +723,7 @@ export class AuthService {
   private toUserResponse(user: UserEntity): {
     id: string;
     email?: string;
-    mobileNumber: string;
+    mobileNumber?: string;
     firstName: string;
     lastName: string;
     role: string;
@@ -726,6 +739,7 @@ export class AuthService {
       onboarding: buildOnboardingResponse({
         role: user.role,
         isPhoneVerified: user.isPhoneVerified,
+        isEmailVerified: user.isEmailVerified,
         isProfileCompleted: user.isProfileCompleted,
         isStepperCompleted: user.isStepperCompleted,
       }),

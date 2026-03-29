@@ -12,14 +12,22 @@ export const ONBOARDING_TOTAL_STEPS = 3;
 export function computeCurrentStep(input: {
   role: UserRoleType;
   isPhoneVerified: boolean;
+  /** OAuth (or other) verified email — counts as “contact verified” when phone is absent. */
+  isEmailVerified: boolean;
   isProfileCompleted: boolean;
   isStepperCompleted: boolean;
 }): UserOnboardingStepValue {
-  const { role, isPhoneVerified: p, isProfileCompleted: prof, isStepperCompleted: s } =
-    input;
-  if (!p) return UserOnboardingStep.NEED_PHONE_VERIFICATION;
+  const {
+    role,
+    isPhoneVerified: p,
+    isEmailVerified: e,
+    isProfileCompleted: prof,
+    isStepperCompleted: s,
+  } = input;
+  const contactVerified = p || e;
+  if (!contactVerified) return UserOnboardingStep.NEED_PHONE_VERIFICATION;
   if (role === 'provider') {
-    // Provider flow has no account/register screen; stepper comes right after OTP.
+    // Provider: phone OTP or verified email (e.g. Google) → stepper next.
     if (!s) return UserOnboardingStep.NEED_PROVIDER_STEPPER;
     return UserOnboardingStep.READY_FOR_TOKENS;
   }
@@ -34,6 +42,7 @@ export function isTokenEligibleStep(currentStep: number): boolean {
 export function nextOnboardingAction(input: {
   role: UserRoleType;
   isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   isProfileCompleted: boolean;
   isStepperCompleted: boolean;
 }): NextOnboardingActionValue {
@@ -55,12 +64,14 @@ export function nextOnboardingAction(input: {
 export function buildOnboardingResponse(input: {
   role: UserRoleType;
   isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   isProfileCompleted: boolean;
   isStepperCompleted: boolean;
 }): {
   currentStep: UserOnboardingStepValue;
   totalSteps: number;
   isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   isProfileCompleted: boolean;
   isStepperCompleted: boolean;
   tokenEligible: boolean;
@@ -71,6 +82,7 @@ export function buildOnboardingResponse(input: {
     currentStep,
     totalSteps: ONBOARDING_TOTAL_STEPS,
     isPhoneVerified: input.isPhoneVerified,
+    isEmailVerified: input.isEmailVerified,
     isProfileCompleted: input.isProfileCompleted,
     isStepperCompleted: input.isStepperCompleted,
     tokenEligible: isTokenEligibleStep(currentStep),

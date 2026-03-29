@@ -9,18 +9,23 @@ function parseDate(v: unknown): Date {
 
 export function mapUserRow(row: Record<string, unknown>): UserEntity {
   const isPhoneVerified = Boolean(row.is_phone_verified);
+  const isEmailVerified = Boolean(row.is_email_verified);
   const isProfileCompleted = Boolean(row.is_profile_completed);
   const isStepperCompleted = Boolean(row.is_stepper_completed);
   const role = row.role as UserRoleType;
   const currentStep = computeCurrentStep({
     role,
     isPhoneVerified,
+    isEmailVerified,
     isProfileCompleted,
     isStepperCompleted,
   });
   return {
     id: String(row.id),
-    mobileNumber: String(row.mobile_number),
+    mobileNumber:
+      row.mobile_number != null && String(row.mobile_number).length > 0
+        ? String(row.mobile_number)
+        : undefined,
     countryCode: row.country_code ? String(row.country_code) : undefined,
     email: row.email ? String(row.email) : undefined,
     password: row.password ? String(row.password) : undefined,
@@ -32,6 +37,7 @@ export function mapUserRow(row: Record<string, unknown>): UserEntity {
     termsAndConditionsAccepted: Boolean(row.terms_and_conditions_accepted),
     isMobileVerified: Boolean(row.is_mobile_verified),
     isPhoneVerified,
+    isEmailVerified,
     isProfileCompleted,
     isStepperCompleted,
     currentStep,
@@ -78,7 +84,7 @@ export async function findUserByFacebookId(facebookId: string): Promise<UserEnti
 }
 
 export async function createUser(data: {
-  mobileNumber: string;
+  mobileNumber?: string | null;
   countryCode?: string;
   email?: string;
   password?: string;
@@ -90,6 +96,7 @@ export async function createUser(data: {
   termsAndConditionsAccepted: boolean;
   isMobileVerified: boolean;
   isPhoneVerified?: boolean;
+  isEmailVerified?: boolean;
   isProfileCompleted?: boolean;
   isStepperCompleted?: boolean;
   role: UserRoleType;
@@ -99,18 +106,20 @@ export async function createUser(data: {
   isActive?: boolean;
 }): Promise<UserEntity> {
   const isPhoneVerified = data.isPhoneVerified ?? false;
+  const isEmailVerified = data.isEmailVerified ?? false;
   const isProfileCompleted = data.isProfileCompleted ?? false;
   const isStepperCompleted =
     data.isStepperCompleted ?? (data.role !== 'provider');
   const currentStep = computeCurrentStep({
     role: data.role,
     isPhoneVerified,
+    isEmailVerified,
     isProfileCompleted,
     isStepperCompleted,
   });
   const [row] = await dataTable('users')
     .insert({
-      mobile_number: data.mobileNumber,
+      mobile_number: data.mobileNumber ?? null,
       country_code: data.countryCode ?? null,
       email: data.email ? data.email.toLowerCase() : null,
       password: data.password ?? null,
@@ -122,6 +131,7 @@ export async function createUser(data: {
       terms_and_conditions_accepted: data.termsAndConditionsAccepted,
       is_mobile_verified: data.isMobileVerified,
       is_phone_verified: isPhoneVerified,
+      is_email_verified: isEmailVerified,
       is_profile_completed: isProfileCompleted,
       is_stepper_completed: isStepperCompleted,
       current_step: currentStep,
@@ -152,7 +162,10 @@ export async function patchUserOnboarding(
   };
   const currentStep = computeCurrentStep({
     role: user.role,
-    ...merged,
+    isPhoneVerified: merged.isPhoneVerified,
+    isEmailVerified: user.isEmailVerified,
+    isProfileCompleted: merged.isProfileCompleted,
+    isStepperCompleted: merged.isStepperCompleted,
   });
   const [row] = await dataTable('users')
     .where({ id: userId })
@@ -175,7 +188,7 @@ export async function updateUserById(
     appleId: string;
     facebookId: string;
     email: string;
-    mobileNumber: string;
+    mobileNumber: string | null;
     firstName: string;
     lastName: string;
     password: string;

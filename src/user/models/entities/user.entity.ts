@@ -6,7 +6,10 @@ export type GenderType = (typeof Gender)[number];
 
 export interface UserEntity {
   id: string;
-  mobileNumber: string;
+  /** Set when user registered with a phone; OAuth-only users may omit. */
+  mobileNumber?: string;
+  /** True when email was verified (e.g. OTP or OAuth provider marks email verified). */
+  isEmailVerified: boolean;
   countryCode?: string;
   email?: string;
   password?: string;
