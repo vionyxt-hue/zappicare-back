@@ -192,6 +192,7 @@ export async function updateUserById(
     firstName: string;
     lastName: string;
     password: string;
+    referCode: string | null;
   }>
 ): Promise<UserEntity | null> {
   const update: Record<string, unknown> = {};
@@ -203,6 +204,7 @@ export async function updateUserById(
   if (patch.firstName !== undefined) update.first_name = patch.firstName;
   if (patch.lastName !== undefined) update.last_name = patch.lastName;
   if (patch.password !== undefined) update.password = patch.password;
+  if (patch.referCode !== undefined) update.refer_code = patch.referCode;
   if (Object.keys(update).length === 0) {
     return findUserById(id);
   }

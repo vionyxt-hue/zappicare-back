@@ -138,6 +138,7 @@ export class ProviderOnboardingService {
         phoneNumber: dto.phoneNumber ?? existing.personalInfo.phoneNumber,
         alternateMobileNumber:
           dto.alternateMobileNumber ?? existing.personalInfo.alternateMobileNumber,
+        referCode: dto.referCode !== undefined ? dto.referCode : existing.personalInfo.referCode,
         email: (dto.email ?? existing.personalInfo.email).toLowerCase(),
         providerType: (dto.providerType as ProviderTypeValue) ?? existing.personalInfo.providerType,
         gender: (dto.gender as GenderType | undefined) ?? existing.personalInfo.gender,
@@ -156,7 +157,8 @@ export class ProviderOnboardingService {
           firstName: fullName,
           lastName: '',
           phoneNumber: dto.phoneNumber ?? user.mobileNumber ?? '',
-          alternateMobileNumber: dto.alternateMobileNumber || undefined,
+          alternateMobileNumber: dto.alternateMobileNumber,
+          referCode: dto.referCode,
           email,
           providerType: dto.providerType as ProviderTypeValue,
           gender: (dto.gender as GenderType | undefined) ?? user.gender,
@@ -164,7 +166,11 @@ export class ProviderOnboardingService {
         onboardingStep: 'professional_details',
       });
     }
-    await updateUserById(userId, { firstName: fullName, lastName: '' });
+    await updateUserById(userId, {
+      firstName: fullName,
+      lastName: '',
+      ...(dto.referCode !== undefined ? { referCode: dto.referCode ?? null } : {}),
+    });
 
     const response = await this.toProviderResponse(provider);
     return responseService.success(

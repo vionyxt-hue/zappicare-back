@@ -81,6 +81,8 @@ export interface IProvider {
     lastName: string;
     phoneNumber: string;
     alternateMobileNumber?: string;
+    /** Optional referral code captured at personal-info step (also stored on `users.refer_code` when set). */
+    referCode?: string;
     email: string;
     providerType: ProviderTypeValue;
     gender?: GenderType;

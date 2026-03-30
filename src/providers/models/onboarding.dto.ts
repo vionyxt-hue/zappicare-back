@@ -12,6 +12,18 @@ import {
 } from '../enums/provider.enum';
 const phoneRegex = /^[0-9]{10,15}$/;
 
+/** Strips +, spaces, dashes so values like "+91 6265654159" validate as digits-only. */
+function optionalDigitsPhone(fieldLabel: string) {
+  return z.preprocess((val: unknown) => {
+    if (val === undefined || val === null) return undefined;
+    const s = String(val).trim();
+    if (s === '') return undefined;
+    const digits = s.replace(/\D/g, '');
+    if (digits.length === 0) return undefined;
+    return digits;
+  }, z.string().regex(phoneRegex, `${fieldLabel} must be 10–15 digits`).optional());
+}
+
 /**
  * Personal info for onboarding. Only providerType is required when coming from
  * provider verification (register) — name, phone, email, gender are pre-filled from User.
@@ -21,11 +33,20 @@ export const PersonalInfoSchema = z.object({
   fullName: z.string().min(1, 'Full name is required').trim(),
   firstName: z.string().min(1).trim().optional(),
   lastName: z.string().min(1).trim().optional(),
-  phoneNumber: z.string().regex(phoneRegex).optional(),
-  alternateMobileNumber: z.string().regex(phoneRegex).optional().or(z.literal('')),
+  phoneNumber: optionalDigitsPhone('Phone number'),
+  alternateMobileNumber: optionalDigitsPhone('Alternate phone number'),
   email: z.string().email('Invalid email').optional(),
   providerType: z.enum(ProviderType as unknown as [string, ...string[]]),
   gender: z.enum(Gender as unknown as [string, ...string[]]).optional(),
+  /** Optional; persisted on provider JSON and `users.refer_code` when provided. */
+  referCode: z.preprocess(
+    (val: unknown) => {
+      if (val === undefined || val === null) return undefined;
+      const s = String(val).trim();
+      return s === '' ? undefined : s;
+    },
+    z.string().max(128).optional()
+  ),
 });
 
 export const AvailabilitySlotSchema = z.object({

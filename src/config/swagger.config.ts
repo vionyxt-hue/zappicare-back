@@ -976,14 +976,27 @@ export const swaggerDocument = {
       },
       PersonalInfoRequest: {
         type: 'object',
-        required: ['fullName', 'phoneNumber', 'email', 'providerType'],
+        required: ['fullName', 'providerType'],
         properties: {
           fullName: { type: 'string', example: 'John Doe' },
           firstName: { type: 'string', deprecated: true, description: 'Deprecated: use fullName' },
           lastName: { type: 'string', deprecated: true, description: 'Deprecated: ignored for provider flow' },
-          phoneNumber: { type: 'string', example: '8160495306', description: '10–15 digits' },
-          alternateMobileNumber: { type: 'string', example: '' },
-          email: { type: 'string', format: 'email' },
+          phoneNumber: {
+            type: 'string',
+            example: '8160495306',
+            description: 'Optional if already on user; 10–15 digits. +country code and spaces are stripped.',
+          },
+          alternateMobileNumber: {
+            type: 'string',
+            example: '9876543210',
+            description: 'Optional. 10–15 digits after stripping + and separators.',
+          },
+          referCode: {
+            type: 'string',
+            example: 'ZC0000',
+            description: 'Optional referral code; stored on provider profile and users.refer_code.',
+          },
+          email: { type: 'string', format: 'email', description: 'Required for new provider row if user has no email.' },
           providerType: { type: 'string', enum: ['Doctor', 'Nurse/Caretaker', 'Ambulance', 'Labs', 'Hospital/Institution'] },
           gender: { type: 'string', enum: ['Male', 'Female', 'Other'] },
         },
