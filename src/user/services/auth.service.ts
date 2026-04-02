@@ -51,7 +51,9 @@ import { jwtExpiryToMs } from '../../common/jwt-expiry';
 import { verifyAccessJwtToken } from '../../common/verify-access-jwt';
 
 const OTP_EXPIRY_MINUTES = 5;
-const OTP_LENGTH = 5; // used for OTP generation
+const OTP_LENGTH = 5; // used for random OTP generation (non-development)
+/** Stored in DB when NODE_ENV is `development` — do not rely on this in production. */
+const DEV_STATIC_OTP_CODE = '12345';
 const VERIFIED_TOKEN_EXPIRY = '10m';
 /** Lets providers call `/providers/onboarding/*` before step 4 (no refresh session). */
 const ONBOARDING_JWT_EXPIRY = '7d';
@@ -106,9 +108,18 @@ export class AuthService {
         { retryAfterSeconds: gate.retryAfterSeconds },
       ]);
     }
-    const code = Math.floor(
-      10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
-    ).toString();
+    let code: string;
+    if (process.env.NODE_ENV === 'development') {
+      // Development only: persist fixed OTP (verify with 12345). Random generation disabled:
+      // code = Math.floor(
+      //   10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
+      // ).toString();
+      code = DEV_STATIC_OTP_CODE;
+    } else {
+      code = Math.floor(
+        10 ** (OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (OTP_LENGTH - 1)
+      ).toString();
+    }
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
     await createOtp({
       mobileNumber: dto.mobileNumber,

@@ -17,6 +17,7 @@ import {
   LoginDto,
   GoogleAuthDto,
   AppleAuthDto,
+  OAuthLoginDto,
 } from '../models/dtos/auth.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 import { extractSessionMeta } from '../../common/extract-session-meta';

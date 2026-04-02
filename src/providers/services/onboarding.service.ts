@@ -135,7 +135,10 @@ export class ProviderOnboardingService {
       existing.personalInfo = {
         firstName: fullName,
         lastName: '',
-        phoneNumber: dto.phoneNumber ?? existing.personalInfo.phoneNumber,
+        countryCode: dto.countryCode,
+        phoneNumber: dto.phoneNumber,
+        alternateCountryCode:
+          dto.alternateCountryCode ?? existing.personalInfo.alternateCountryCode,
         alternateMobileNumber:
           dto.alternateMobileNumber ?? existing.personalInfo.alternateMobileNumber,
         referCode: dto.referCode !== undefined ? dto.referCode : existing.personalInfo.referCode,
@@ -156,7 +159,9 @@ export class ProviderOnboardingService {
         personalInfo: {
           firstName: fullName,
           lastName: '',
-          phoneNumber: dto.phoneNumber ?? user.mobileNumber ?? '',
+          countryCode: dto.countryCode,
+          phoneNumber: dto.phoneNumber,
+          alternateCountryCode: dto.alternateCountryCode,
           alternateMobileNumber: dto.alternateMobileNumber,
           referCode: dto.referCode,
           email,
@@ -169,6 +174,8 @@ export class ProviderOnboardingService {
     await updateUserById(userId, {
       firstName: fullName,
       lastName: '',
+      mobileNumber: dto.phoneNumber,
+      countryCode: dto.countryCode,
       ...(dto.referCode !== undefined ? { referCode: dto.referCode ?? null } : {}),
     });
 
@@ -438,7 +445,6 @@ export class ProviderOnboardingService {
         url: dto.governmentIdUrl,
         fileName: dto.governmentIdFileName,
         fileSize: dto.governmentIdFileSize,
-        metadata: dto.governmentIdType ? { type: dto.governmentIdType } : undefined,
       });
     }
     if (
@@ -682,7 +688,6 @@ export class ProviderOnboardingService {
               url: govId.url,
               fileName: govId.fileName,
               fileSize: govId.fileSize,
-              type: (govId.metadata as { type?: string })?.type,
             }
           : undefined,
       profilePicture: file(map.get('profilePicture') as IProviderDocument),

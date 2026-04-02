@@ -34,9 +34,6 @@ export type OnboardingStepValue = (typeof OnboardingStep)[number];
 export const VerificationStatus = ['pending', 'approved', 'rejected'] as const;
 export type VerificationStatusValue = (typeof VerificationStatus)[number];
 
-export const GovernmentIdType = ['Aadhar', 'Driving License'] as const;
-export type GovernmentIdTypeValue = (typeof GovernmentIdType)[number];
-
 export const LabService = [
   'Blood Sugar Test',
   'Liver Function Test (LFT)',

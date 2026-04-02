@@ -510,7 +510,7 @@ export const swaggerDocument = {
         tags: ['Provider Onboarding'],
         summary: 'Submit personal info',
         description:
-          'Step 1: Submit or update provider personal information. `fullName` is mandatory and stored as users.first_name (users.last_name is forced to empty string).',
+          'Step 1: Submit or update provider personal information. `fullName` is mandatory and stored as users.first_name (users.last_name is forced to empty string). Send `countryCode` (e.g. +91) and `phoneNumber` (national digits only) separately; both are stored on the provider profile and synced to users.country_code and users.mobile_number.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -666,7 +666,7 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Onboarding'],
         summary: 'Submit documents',
-        description: 'Step 3: Upload documents (multipart/form-data). Files are uploaded to S3; URLs are stored. Alternatively send JSON with pre-uploaded URLs. Optional text: medicalRegistrationNumber, governmentIdType (Aadhar | Driving License). File fields: medicalRegistrationCertificate, qualificationProof, governmentId, profilePicture, licenseCertificate, labEntrancePhoto, vehicleRegistrationPapers, driverLicense, hospitalLicense, hospitalLogo. Max 10 MB per file; types: JPEG, PNG, WebP, PDF.',
+        description: 'Step 3: Upload documents (multipart/form-data). Files are uploaded to S3; URLs are stored. Alternatively send JSON with pre-uploaded URLs. Optional text: medicalRegistrationNumber. File fields: medicalRegistrationCertificate, qualificationProof, governmentId, profilePicture, licenseCertificate, labEntrancePhoto, vehicleRegistrationPapers, driverLicense, hospitalLicense, hospitalLogo. Max 10 MB per file; types: JPEG, PNG, WebP, PDF.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           content: {
@@ -679,7 +679,6 @@ export const swaggerDocument = {
                 type: 'object',
                 properties: {
                   medicalRegistrationNumber: { type: 'string' },
-                  governmentIdType: { type: 'string', enum: ['Aadhar', 'Driving License'] },
                   medicalRegistrationCertificate: { type: 'string', format: 'binary' },
                   qualificationProof: { type: 'string', format: 'binary' },
                   governmentId: { type: 'string', format: 'binary' },
@@ -811,7 +810,8 @@ export const swaggerDocument = {
       get: {
         tags: ['Provider Onboarding'],
         summary: 'List coverage areas',
-        description: 'Returns list of coverage areas (Ambulance, Nurse).',
+        description:
+          'Optional suggested labels for UI only; `POST .../ambulance-professional-details` and nurse professional details accept any non-empty strings in `coverageArea`.',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': { description: 'List of coverage areas', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
@@ -824,7 +824,7 @@ export const swaggerDocument = {
         tags: ['Provider Onboarding'],
         summary: 'List nurse services',
         description:
-          'Returns allowed nurse service types (specialisations) for dropdown: General Consultation, Pediatrics, Dermatology, Mental Health, Other.',
+          'Optional suggested nurse service labels for UI only; `POST .../nurse-professional-details` accepts any non-empty strings in `services` and `coverageArea`.',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': { description: 'List of nurse services', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
@@ -998,13 +998,33 @@ export const swaggerDocument = {
       },
       PersonalInfoRequest: {
         type: 'object',
-        required: ['fullName', 'providerType'],
+        required: ['fullName', 'countryCode', 'phoneNumber', 'providerType'],
         properties: {
           fullName: { type: 'string', example: 'John Doe' },
           firstName: { type: 'string', deprecated: true, description: 'Deprecated: use fullName' },
           lastName: { type: 'string', deprecated: true, description: 'Deprecated: ignored for provider flow' },
-          phoneNumber: { type: 'string', example: '8160495306', description: '10–15 digits' },
-          alternateMobileNumber: { type: 'string', example: '' },
+          countryCode: {
+            type: 'string',
+            example: '+91',
+            description: 'Calling prefix only (1–4 digits, optional + in input; stored normalized with +). Do not include the subscriber number.',
+          },
+          phoneNumber: {
+            type: 'string',
+            example: '8160495306',
+            description: 'National mobile number, digits only (5–15). Must not include country code.',
+          },
+          alternateCountryCode: {
+            type: 'string',
+            example: '+91',
+            description:
+              'Optional. Alternate line country prefix only (key differs from `countryCode`). Required if `alternateMobileNumber` is sent.',
+          },
+          alternateMobileNumber: {
+            type: 'string',
+            example: '9876543210',
+            description:
+              'Optional. Alternate national number, digits only. Required if `alternateCountryCode` is sent.',
+          },
           email: { type: 'string', format: 'email' },
           providerType: { type: 'string', enum: ['Doctor', 'Nurse', 'Ambulance', 'Labs', 'Hospital/Institution'] },
           gender: { type: 'string', enum: ['Male', 'Female', 'Other'] },
@@ -1062,7 +1082,12 @@ export const swaggerDocument = {
           vehicleRegistrationNumber: { type: 'string' },
           driverLicenseNumber: { type: 'string' },
           ambulanceType: { type: 'string' },
-          coverageArea: { type: 'array', items: { type: 'string', enum: ['Local', 'Highway', 'Airport Transfers', 'Rural / Remote Area Coverage', 'Interstate'] }, minItems: 1 },
+          coverageArea: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            minItems: 1,
+            description: 'Free-text coverage areas from the client (not restricted to a fixed enum).',
+          },
           availabilityHours: { type: 'string' },
           hospitalInstitutionId: { type: 'string' },
           hospitalInstitutionName: { type: 'string' },
@@ -1077,20 +1102,16 @@ export const swaggerDocument = {
           certificationLicenseNumber: { type: 'string' },
           services: {
             type: 'array',
-            items: {
-              type: 'string',
-              enum: [
-                'General Consultation',
-                'Pediatrics',
-                'Dermatology',
-                'Mental Health',
-                'Other',
-              ],
-            },
+            items: { type: 'string', minLength: 1 },
             minItems: 1,
-            description: 'Service type / specialisation (multi-select)',
+            description: 'Free-text services / specialisations from the client (not restricted to a fixed enum).',
           },
-          coverageArea: { type: 'array', items: { type: 'string', enum: ['Local', 'Highway', 'Airport Transfers', 'Rural / Remote Area Coverage', 'Interstate'] }, minItems: 1 },
+          coverageArea: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            minItems: 1,
+            description: 'Free-text coverage areas from the client (not restricted to a fixed enum).',
+          },
           availability: { type: 'array', items: { $ref: '#/components/schemas/AvailabilitySlot' }, minItems: 1 },
           hospitalInstitutionId: { type: 'string' },
           hospitalInstitutionName: { type: 'string' },
@@ -1125,7 +1146,6 @@ export const swaggerDocument = {
           governmentIdUrl: { type: 'string', format: 'uri' },
           governmentIdFileName: { type: 'string' },
           governmentIdFileSize: { type: 'integer' },
-          governmentIdType: { type: 'string', enum: ['Aadhar', 'Driving License'] },
           profilePictureUrl: { type: 'string', format: 'uri' },
           profilePictureFileName: { type: 'string' },
           profilePictureFileSize: { type: 'integer' },

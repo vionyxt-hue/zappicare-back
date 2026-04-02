@@ -189,6 +189,7 @@ export async function updateUserById(
     facebookId: string;
     email: string;
     mobileNumber: string | null;
+    countryCode: string | null;
     firstName: string;
     lastName: string;
     password: string;
@@ -201,6 +202,7 @@ export async function updateUserById(
   if (patch.facebookId !== undefined) update.facebook_id = patch.facebookId;
   if (patch.email !== undefined) update.email = patch.email.toLowerCase();
   if (patch.mobileNumber !== undefined) update.mobile_number = patch.mobileNumber;
+  if (patch.countryCode !== undefined) update.country_code = patch.countryCode;
   if (patch.firstName !== undefined) update.first_name = patch.firstName;
   if (patch.lastName !== undefined) update.last_name = patch.lastName;
   if (patch.password !== undefined) update.password = patch.password;

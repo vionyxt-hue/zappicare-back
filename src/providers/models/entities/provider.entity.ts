@@ -79,7 +79,13 @@ export interface IProvider {
   personalInfo: {
     firstName: string;
     lastName: string;
+    /** E.164-style calling prefix only, e.g. +91 (not merged with phoneNumber). Omitted on legacy rows until re-saved. */
+    countryCode?: string;
+    /** National mobile number digits only (no country prefix). */
     phoneNumber: string;
+    /** Alternate line country prefix only (e.g. +91); use with `alternateMobileNumber`. */
+    alternateCountryCode?: string;
+    /** Alternate national number only; pair with `alternateCountryCode`. */
     alternateMobileNumber?: string;
     /** Optional referral code captured at personal-info step (also stored on `users.refer_code` when set). */
     referCode?: string;

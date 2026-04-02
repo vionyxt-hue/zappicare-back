@@ -6,22 +6,43 @@ import {
   WorkMode,
   OnlineConsultationMode,
   DayOfWeek,
-  CoverageArea,
-  NurseService,
   HospitalDepartment,
 } from '../enums/provider.enum';
-const phoneRegex = /^[0-9]{10,15}$/;
+const nationalPhoneRegex = /^[0-9]{5,15}$/;
 
-/** Strips +, spaces, dashes so values like "+91 6265654159" validate as digits-only. */
-function optionalDigitsPhone(fieldLabel: string) {
-  return z.preprocess((val: unknown) => {
-    if (val === undefined || val === null) return undefined;
-    const s = String(val).trim();
-    if (s === '') return undefined;
-    const digits = s.replace(/\D/g, '');
-    if (digits.length === 0) return undefined;
-    return digits;
-  }, z.string().regex(phoneRegex, `${fieldLabel} must be 10–15 digits`).optional());
+/** Normalizes country code to +{1–4 digits}, e.g. "91" | "+91" → "+91". */
+function preprocessCountryCode(val: unknown): string {
+  if (val === undefined || val === null) return '';
+  const s = String(val).trim().replace(/[\s-]/g, '');
+  if (s === '') return '';
+  const digits = s.startsWith('+') ? s.slice(1) : s;
+  if (!/^[0-9]{1,4}$/.test(digits)) return s;
+  return `+${digits}`;
+}
+
+/** National number only: strips non-digits. */
+function preprocessNationalPhone(val: unknown): string {
+  if (val === undefined || val === null) return '';
+  const s = String(val).trim();
+  if (s === '') return '';
+  return s.replace(/\D/g, '');
+}
+
+/** Optional country code: undefined if missing/empty. */
+function preprocessOptionalCountryCode(val: unknown): string | undefined {
+  if (val === undefined || val === null) return undefined;
+  if (String(val).trim() === '') return undefined;
+  const normalized = preprocessCountryCode(val);
+  if (normalized === '') return undefined;
+  return normalized;
+}
+
+/** Optional national number: undefined if missing/empty. */
+function preprocessOptionalNationalPhone(val: unknown): string | undefined {
+  if (val === undefined || val === null) return undefined;
+  if (String(val).trim() === '') return undefined;
+  const digits = String(val).replace(/\D/g, '');
+  return digits === '' ? undefined : digits;
 }
 
 /**
@@ -33,8 +54,38 @@ export const PersonalInfoSchema = z.object({
   fullName: z.string().min(1, 'Full name is required').trim(),
   firstName: z.string().min(1).trim().optional(),
   lastName: z.string().min(1).trim().optional(),
-  phoneNumber: optionalDigitsPhone('Phone number'),
-  alternateMobileNumber: optionalDigitsPhone('Alternate phone number'),
+  /** Calling country prefix only (e.g. +91). Do not merge into phoneNumber. */
+  countryCode: z.preprocess(
+    preprocessCountryCode,
+    z
+      .string()
+      .min(1, 'Country code is required')
+      .regex(/^\+[1-9][0-9]{0,3}$/, 'Country code must be 1–4 digits after + (e.g. +91)')
+  ),
+  /** National mobile number, digits only (no country code). */
+  phoneNumber: z.preprocess(
+    preprocessNationalPhone,
+    z
+      .string()
+      .min(1, 'Phone number is required')
+      .regex(nationalPhoneRegex, 'Phone number must be 5–15 digits (national part only)')
+  ),
+  /** Alternate line: country prefix only (different key from `countryCode`). */
+  alternateCountryCode: z.preprocess(
+    preprocessOptionalCountryCode,
+    z
+      .string()
+      .regex(/^\+[1-9][0-9]{0,3}$/, 'Invalid alternate country code')
+      .optional()
+  ),
+  /** Alternate national number only (different key from `phoneNumber`). */
+  alternateMobileNumber: z.preprocess(
+    preprocessOptionalNationalPhone,
+    z
+      .string()
+      .regex(nationalPhoneRegex, 'Alternate number must be 5–15 digits (national part only)')
+      .optional()
+  ),
   email: z.string().email('Invalid email').optional(),
   providerType: z.enum(ProviderType as unknown as [string, ...string[]]),
   gender: z.enum(Gender as unknown as [string, ...string[]]).optional(),
@@ -47,7 +98,19 @@ export const PersonalInfoSchema = z.object({
     },
     z.string().max(128).optional()
   ),
-});
+}).refine(
+  (data) => {
+    const hasCc = !!data.alternateCountryCode;
+    const hasNum = !!data.alternateMobileNumber;
+    if (!hasCc && !hasNum) return true;
+    return hasCc && hasNum;
+  },
+  {
+    message:
+      'Alternate phone: send both alternateCountryCode and alternateMobileNumber, or omit both',
+    path: ['alternateMobileNumber'],
+  }
+);
 
 export const AvailabilitySlotSchema = z.object({
   dayOfWeek: z.enum(DayOfWeek as unknown as [string, ...string[]]),
@@ -97,8 +160,8 @@ export const AmbulanceProfessionalDetailsSchema = z
     driverLicenseNumber: z.string().trim().optional(),
     ambulanceType: z.string().min(1, 'Ambulance type is required').trim(),
     coverageArea: z
-      .array(z.enum(CoverageArea as unknown as [string, ...string[]]))
-      .min(1, 'Select at least one coverage area'),
+      .array(z.string().trim().min(1, 'Coverage area cannot be empty'))
+      .min(1, 'Add at least one coverage area'),
     availabilityHours: z.string().trim().optional(),
     hospitalInstitutionId: z.string().optional(),
     hospitalInstitutionName: z.string().optional(),
@@ -130,11 +193,11 @@ export const NurseProfessionalDetailsSchema = z
     workLocationType: z.enum(WorkLocationType as unknown as [string, ...string[]]),
     certificationLicenseNumber: z.string().trim().optional(),
     services: z
-      .array(z.enum(NurseService as unknown as [string, ...string[]]))
-      .min(1, 'Select at least one service'),
+      .array(z.string().trim().min(1, 'Service cannot be empty'))
+      .min(1, 'Add at least one service'),
     coverageArea: z
-      .array(z.enum(CoverageArea as unknown as [string, ...string[]]))
-      .min(1, 'Select at least one coverage area'),
+      .array(z.string().trim().min(1, 'Coverage area cannot be empty'))
+      .min(1, 'Add at least one coverage area'),
     availability: z.array(AvailabilitySlotSchema).min(1, 'Add at least one availability slot'),
     hospitalInstitutionId: z.string().optional(),
     hospitalInstitutionName: z.string().optional(),
@@ -223,7 +286,6 @@ export const DocumentsSchema = z.object({
   governmentIdUrl: z.string().url().optional(),
   governmentIdFileName: z.string().optional(),
   governmentIdFileSize: z.number().optional(),
-  governmentIdType: z.enum(['Aadhar', 'Driving License']).optional(),
   profilePictureUrl: z.string().url().optional(),
   profilePictureFileName: z.string().optional(),
   profilePictureFileSize: z.number().optional(),
