@@ -653,7 +653,7 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Onboarding'],
         summary: 'Submit nurse professional details',
-        description: 'Step 2 (Nurse/Caretaker): Certification, services, coverage area, availability. Required when provider type is Nurse/Caretaker.',
+        description: 'Step 2 (Nurse): Certification, services, coverage area, availability. Required when provider type is Nurse.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -740,7 +740,8 @@ export const swaggerDocument = {
       post: {
         tags: ['Provider Onboarding'],
         summary: 'Submit bank details',
-        description: 'Step 4: Bank account, IFSC, optional UPI; for Hospital/Institution optional GST number.',
+        description:
+          'Step 4: Bank account, IFSC, optional UPI; for Hospital/Institution optional GST number. On success, returns the same auth payload as login when onboarding is complete (`user` with `onboarding.tokenEligible`, `tokens` access+refresh), plus full `provider` profile — use to replace the onboarding JWT on the client. Optional body fields for session/device: `fcmToken`, `apnsToken`, `onesignalPlayerId`, `devicePlatform`, `timezone`, `deviceInfo`, `locationInfo` (same as `/auth/login`).',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -751,7 +752,10 @@ export const swaggerDocument = {
           },
         },
         responses: {
-          '200': { description: 'Bank details saved', content: { 'application/json': { schema: { $ref: '#/components/schemas/ProviderSuccessResponse' } } } },
+          '200': {
+            description: 'Bank details saved; full session issued',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ProviderBankStepCompleteResponse' } } },
+          },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '401': { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '404': { description: 'Provider not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
@@ -850,7 +854,8 @@ export const swaggerDocument = {
       get: {
         tags: ['Provider Onboarding'],
         summary: 'List nurse services',
-        description: 'Returns list of nurse/caretaker services for dropdown.',
+        description:
+          'Returns allowed nurse service types (specialisations) for dropdown: General Consultation, Pediatrics, Dermatology, Mental Health, Other.',
         security: [{ bearerAuth: [] }],
         responses: {
           '200': { description: 'List of nurse services', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
@@ -1005,6 +1010,23 @@ export const swaggerDocument = {
           data: { $ref: '#/components/schemas/ProviderResponse' },
         },
       },
+      ProviderBankStepCompleteResponse: {
+        type: 'object',
+        properties: {
+          statusCode: { type: 'integer' },
+          responseCode: { type: 'string' },
+          message: { type: 'string' },
+          data: {
+            type: 'object',
+            required: ['user', 'tokens', 'provider'],
+            properties: {
+              user: { $ref: '#/components/schemas/UserResponse' },
+              tokens: { $ref: '#/components/schemas/Tokens', description: 'Access + refresh session (same as login when token-eligible)' },
+              provider: { $ref: '#/components/schemas/ProviderResponse' },
+            },
+          },
+        },
+      },
       PersonalInfoRequest: {
         type: 'object',
         required: ['fullName', 'phoneNumber', 'email', 'providerType'],
@@ -1015,7 +1037,7 @@ export const swaggerDocument = {
           phoneNumber: { type: 'string', example: '8160495306', description: '10–15 digits' },
           alternateMobileNumber: { type: 'string', example: '' },
           email: { type: 'string', format: 'email' },
-          providerType: { type: 'string', enum: ['Doctor', 'Nurse/Caretaker', 'Ambulance', 'Labs', 'Hospital/Institution'] },
+          providerType: { type: 'string', enum: ['Doctor', 'Nurse', 'Ambulance', 'Labs', 'Hospital/Institution'] },
           gender: { type: 'string', enum: ['Male', 'Female', 'Other'] },
         },
       },
@@ -1084,7 +1106,21 @@ export const swaggerDocument = {
         properties: {
           workLocationType: { type: 'string', enum: ['Hospital / Institution', 'Independent Practice'] },
           certificationLicenseNumber: { type: 'string' },
-          services: { type: 'array', items: { type: 'string', enum: ['Elder Care', 'Baby Care', 'Post Surgery Care', 'Pregnancy Care', 'Disability Care'] }, minItems: 1 },
+          services: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: [
+                'General Consultation',
+                'Pediatrics',
+                'Dermatology',
+                'Mental Health',
+                'Other',
+              ],
+            },
+            minItems: 1,
+            description: 'Service type / specialisation (multi-select)',
+          },
           coverageArea: { type: 'array', items: { type: 'string', enum: ['Local', 'Highway', 'Airport Transfers', 'Rural / Remote Area Coverage', 'Interstate'] }, minItems: 1 },
           availability: { type: 'array', items: { $ref: '#/components/schemas/AvailabilitySlot' }, minItems: 1 },
           hospitalInstitutionId: { type: 'string' },

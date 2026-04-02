@@ -64,7 +64,7 @@ const REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE: Record<
     'governmentId',
     'profilePicture',
   ],
-  'Nurse/Caretaker': ['qualificationProof', 'governmentId', 'profilePicture'],
+  Nurse: ['qualificationProof', 'governmentId', 'profilePicture'],
   Labs: ['licenseCertificate', 'labEntrancePhoto', 'governmentId', 'profilePicture'],
   Ambulance: ['vehicleRegistrationPapers', 'driverLicense', 'governmentId', 'profilePicture'],
   'Hospital/Institution': ['hospitalLicense', 'governmentId', 'profilePicture'],
@@ -83,7 +83,7 @@ export class ProviderOnboardingService {
         return provider.professionalProfiles.length > 0
           ? null
           : 'Doctor professional profile is required';
-      case 'Nurse/Caretaker':
+      case 'Nurse':
         return provider.nurseProfessionalDetails
           ? null
           : 'Nurse professional details are required';
@@ -316,9 +316,9 @@ export class ProviderOnboardingService {
   async submitNurseProfessionalDetails(userId: string, dto: NurseProfessionalDetailsDto) {
     const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Complete personal information first');
-    if (provider.personalInfo.providerType !== 'Nurse/Caretaker') {
+    if (provider.personalInfo.providerType !== 'Nurse') {
       return responseService.badRequest(
-        'Nurse professional details are only for Nurse/Caretaker provider type'
+        'Nurse professional details are only for Nurse provider type'
       );
     }
 

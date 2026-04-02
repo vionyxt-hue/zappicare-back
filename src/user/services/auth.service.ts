@@ -579,6 +579,45 @@ export class AuthService {
     };
   }
 
+  /**
+   * Same shape as login when `tokenEligible`: `{ user, tokens }`.
+   * Call after provider stepper completion so the client can replace the onboarding JWT with access+refresh.
+   */
+  async issueLoginPayloadForEligibleUser(
+    userId: string,
+    sessionMeta?: SessionMeta
+  ): Promise<
+    | {
+        ok: true;
+        user: ReturnType<AuthService['toUserResponse']>;
+        tokens: Awaited<ReturnType<AuthService['issueSession']>>;
+      }
+    | {
+        ok: false;
+        error: ReturnType<ResponseService['notFound']> | ReturnType<ResponseService['error']>;
+      }
+  > {
+    const user = await findUserById(userId);
+    if (!user) {
+      return { ok: false, error: this.responseService.notFound(AuthErrorMessages.USER_NOT_FOUND) };
+    }
+    if (!isTokenEligibleStep(user.currentStep)) {
+      return {
+        ok: false,
+        error: this.responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          'Session could not be issued: onboarding not complete'
+        ),
+      };
+    }
+    const tokens = await this.issueSession(user, sessionMeta);
+    return {
+      ok: true,
+      user: this.toUserResponse(user),
+      tokens,
+    };
+  }
+
   private async registerOrLoginSuccess(
     user: UserEntity,
     code: ResponseCode,

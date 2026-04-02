@@ -4,11 +4,20 @@ import { verifyProviderRouteJwtToken } from '../../common/verify-access-jwt';
 import { ProviderOnboardingController } from '../controllers/onboarding.controller';
 import { ProviderOnboardingService } from '../services/onboarding.service';
 import { uploadDocumentsMiddleware } from '../middlewares/upload-documents.middleware';
+import { AuthService } from '../../user/services/auth.service';
 
-export function createProviderOnboardingRoutes(config: { jwtSecret: string }): Router {
+export function createProviderOnboardingRoutes(config: {
+  jwtSecret: string;
+  jwtExpiresIn: string;
+  jwtRefreshExpiresIn: string;
+  bcryptRounds: number;
+  googleClientId?: string;
+  appleClientId?: string;
+}): Router {
   const router = Router();
   const onboardingService = new ProviderOnboardingService();
-  const controller = new ProviderOnboardingController(onboardingService);
+  const authService = new AuthService(config);
+  const controller = new ProviderOnboardingController(onboardingService, authService);
 
   const authMiddleware = createAuthMiddleware({
     verifyToken: (token: string) => verifyProviderRouteJwtToken(token, config.jwtSecret),
