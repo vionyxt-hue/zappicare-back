@@ -124,7 +124,7 @@ export const AmbulanceProfessionalDetailsSchema = z
     }
   );
 
-/** Nurse/Caretaker professional details (when providerType is Nurse/Caretaker) */
+/** Nurse professional details (when providerType is Nurse) */
 export const NurseProfessionalDetailsSchema = z
   .object({
     workLocationType: z.enum(WorkLocationType as unknown as [string, ...string[]]),

@@ -1,6 +1,6 @@
 export const ProviderType = [
   'Doctor',
-  'Nurse/Caretaker',
+  'Nurse',
   'Ambulance',
   'Labs',
   'Hospital/Institution',
@@ -62,12 +62,13 @@ export const CoverageArea = [
 ] as const;
 export type CoverageAreaValue = (typeof CoverageArea)[number];
 
+/** Nurse professional `services` (service type / specialisation). */
 export const NurseService = [
-  'Elder Care',
-  'Baby Care',
-  'Post Surgery Care',
-  'Pregnancy Care',
-  'Disability Care',
+  'General Consultation',
+  'Pediatrics',
+  'Dermatology',
+  'Mental Health',
+  'Other',
 ] as const;
 export type NurseServiceValue = (typeof NurseService)[number];
 

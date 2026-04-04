@@ -22,6 +22,8 @@ import {
   type BankDetailsDto,
 } from '../models/dtos/onboarding.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
+import { AuthService } from '../../user/services/auth.service';
+import { extractSessionMeta } from '../../common/extract-session-meta';
 
 const responseService = new ResponseService();
 
@@ -35,7 +37,10 @@ function validationError(error: unknown): string {
 }
 
 export class ProviderOnboardingController {
-  constructor(private readonly onboardingService: ProviderOnboardingService) {}
+  constructor(
+    private readonly onboardingService: ProviderOnboardingService,
+    private readonly authService: AuthService
+  ) {}
 
   submitPersonalInfo = async (req: RequestWithUser, res: Response): Promise<void> => {
     try {
@@ -322,7 +327,24 @@ export class ProviderOnboardingController {
         userId,
         parsed.data as BankDetailsDto
       );
-      res.status(result.statusCode).json(result);
+      if (result.statusCode >= 400 || result.data == null) {
+        res.status(result.statusCode).json(result);
+        return;
+      }
+      const session = await this.authService.issueLoginPayloadForEligibleUser(
+        userId,
+        extractSessionMeta(req)
+      );
+      if (!session.ok) {
+        res.status(session.error.statusCode).json(session.error);
+        return;
+      }
+      const merged = responseService.success(result.responseCode, result.message, {
+        user: session.user,
+        tokens: session.tokens,
+        provider: result.data,
+      });
+      res.status(merged.statusCode).json(merged);
     } catch (error) {
       res.status(500).json(
         responseService.error(
