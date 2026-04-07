@@ -71,6 +71,46 @@ const REQUIRED_DOCUMENTS_BY_PROVIDER_TYPE: Record<
 };
 
 export class ProviderOnboardingService {
+  private static readonly DOCUMENT_URL_FIELDS: Array<keyof DocumentsDto> = [
+    'medicalRegistrationCertificateUrl',
+    'qualificationProofUrl',
+    'governmentIdUrl',
+    'profilePictureUrl',
+    'licenseCertificateUrl',
+    'labEntrancePhotoUrl',
+    'vehicleRegistrationPapersUrl',
+    'driverLicenseUrl',
+    'hospitalLicenseUrl',
+    'hospitalLogoUrl',
+  ];
+
+  private async validateRemoteBinaryUrl(url: string): Promise<boolean> {
+    try {
+      const response = await fetch(url, { method: 'HEAD' });
+      if (!response.ok) return false;
+      const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+      if (!contentType) return false;
+      return (
+        contentType.startsWith('image/') ||
+        contentType === 'application/pdf' ||
+        contentType === 'application/octet-stream'
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async validateDocumentUrls(dto: DocumentsDto): Promise<string[]> {
+    const invalidFields: string[] = [];
+    for (const field of ProviderOnboardingService.DOCUMENT_URL_FIELDS) {
+      const value = dto[field];
+      if (!value || typeof value !== 'string') continue;
+      const isValid = await this.validateRemoteBinaryUrl(value);
+      if (!isValid) invalidFields.push(String(field));
+    }
+    return invalidFields;
+  }
+
   private ensureProfileArray(provider: IProvider): void {
     if (!Array.isArray(provider.professionalProfiles)) {
       provider.professionalProfiles = [];
@@ -406,6 +446,13 @@ export class ProviderOnboardingService {
   async submitDocuments(userId: string, dto: DocumentsDto) {
     const provider = await findProviderByUserId(userId);
     if (!provider) return responseService.notFound('Provider not found');
+
+    const invalidUrlFields = await this.validateDocumentUrls(dto);
+    if (invalidUrlFields.length > 0) {
+      return responseService.notFound(
+        `Uploaded file not found or not a valid binary document for: ${invalidUrlFields.join(', ')}`
+      );
+    }
 
     const providerId = provider.id;
 

@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { ProviderOnboardingService } from '../services/onboarding.service';
 import { ResponseService, ResponseCode } from '../../core/response-management';
 import { getS3Service } from '../../core/s3/s3.service';
+import { getAzureBlobService } from '../../core/azure/azure-blob.service';
 import {
   PersonalInfoSchema,
   ProfessionalProfileSchema,
@@ -12,6 +13,7 @@ import {
   HospitalProfessionalDetailsSchema,
   DocumentsSchema,
   BankDetailsSchema,
+  GenerateDocumentUploadUrlSchema,
   type PersonalInfoDto,
   type ProfessionalProfileDto,
   type LabProfessionalDetailsDto,
@@ -20,12 +22,20 @@ import {
   type HospitalProfessionalDetailsDto,
   type DocumentsDto,
   type BankDetailsDto,
+  type GenerateDocumentUploadUrlDto,
 } from '../models/dtos/onboarding.dto';
 import { RequestWithUser } from '../../interface/auth.interface';
 import { AuthService } from '../../user/services/auth.service';
 import { extractSessionMeta } from '../../common/extract-session-meta';
 
 const responseService = new ResponseService();
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'application/pdf': 'pdf',
+};
 
 function validationError(error: unknown): string {
   if (error instanceof ZodError) {
@@ -301,6 +311,70 @@ export class ProviderOnboardingController {
         parsed.data as DocumentsDto
       );
       res.status(result.statusCode).json(result);
+    } catch (error) {
+      res.status(500).json(
+        responseService.error(
+          ResponseCode.INTERNAL_SERVER_ERROR,
+          (error as Error).message
+        )
+      );
+    }
+  };
+
+  generateDocumentUploadUrl = async (req: RequestWithUser, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json(responseService.unauthorized('Unauthorized'));
+        return;
+      }
+
+      const parsed = GenerateDocumentUploadUrlSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json(responseService.badRequest(validationError(parsed.error)));
+        return;
+      }
+
+      const azure = getAzureBlobService();
+      if (!azure.isConfigured()) {
+        res.status(503).json(
+          responseService.error(
+            ResponseCode.INTERNAL_SERVER_ERROR,
+            'Azure upload is not configured. Set AZURE_STORAGE_ACCOUNT_NAME, AZURE_STORAGE_ACCOUNT_KEY, AZURE_STORAGE_ENDPOINT_SUFFIX, and AZURE_STORAGE_CONTAINER_NAME.'
+          )
+        );
+        return;
+      }
+      const providerId = await this.onboardingService.getProviderIdByUserId(userId);
+      if (!providerId) {
+        res.status(404).json(responseService.notFound('Provider not found'));
+        return;
+      }
+
+      const dto = parsed.data as GenerateDocumentUploadUrlDto;
+      const contentType = dto.contentType.toLowerCase();
+
+      const extFromFileName = dto.fileName?.includes('.')
+        ? dto.fileName.split('.').pop()?.replace(/[^a-z0-9]/gi, '').toLowerCase()
+        : undefined;
+      const extFromMime = MIME_TO_EXT[contentType];
+      const safeExt = extFromFileName || extFromMime || 'bin';
+      const blobName = `providers/${providerId}/documents/${dto.type}/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 10)}.${safeExt}`;
+
+      const result = await azure.generateWritePresignedUrl({
+        blobName,
+        contentType,
+        expiresInSeconds: dto.expiresInSeconds,
+      });
+
+      const response = responseService.success(
+        ResponseCode.RETRIEVED,
+        'Upload URL generated',
+        result
+      );
+      res.status(response.statusCode).json(response);
     } catch (error) {
       res.status(500).json(
         responseService.error(

@@ -662,6 +662,30 @@ export const swaggerDocument = {
         },
       },
     },
+    '/providers/onboarding/documents/presigned-url': {
+      post: {
+        tags: ['Provider Onboarding'],
+        summary: 'Generate Azure upload URL',
+        description:
+          'Generates a write-only Azure Blob presigned URL for document upload. Send MIME `type` from frontend (e.g. image/jpeg, application/pdf).',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/GenerateDocumentUploadUrlRequest' },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Upload URL generated', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessWithData' } } } },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '404': { description: 'Provider not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '503': { description: 'Azure storage not configured', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/providers/onboarding/documents': {
       post: {
         tags: ['Provider Onboarding'],
@@ -1167,6 +1191,48 @@ export const swaggerDocument = {
           hospitalLogoUrl: { type: 'string', format: 'uri' },
           hospitalLogoFileName: { type: 'string' },
           hospitalLogoFileSize: { type: 'integer' },
+        },
+      },
+      GenerateDocumentUploadUrlRequest: {
+        type: 'object',
+        required: ['type', 'contentType'],
+        properties: {
+          type: {
+            type: 'string',
+            enum: [
+              'medicalRegistrationNumber',
+              'medicalRegistrationCertificate',
+              'qualificationProof',
+              'governmentId',
+              'profilePicture',
+              'licenseCertificate',
+              'labEntrancePhoto',
+              'vehicleRegistrationPapers',
+              'driverLicense',
+              'hospitalLicense',
+              'hospitalLogo',
+            ],
+            example: 'medicalRegistrationCertificate',
+            description:
+              'Logical provider document type.',
+          },
+          contentType: {
+            type: 'string',
+            example: 'image/jpeg',
+            description: 'Actual MIME content type of the file.',
+          },
+          fileName: {
+            type: 'string',
+            example: 'driving-license.jpg',
+            description: 'Optional original filename to infer extension.',
+          },
+          expiresInSeconds: {
+            type: 'integer',
+            minimum: 60,
+            maximum: 86400,
+            default: 900,
+            description: 'Optional SAS expiry in seconds (1 minute to 24 hours).',
+          },
         },
       },
       BankDetailsRequest: {

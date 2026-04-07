@@ -52,6 +52,11 @@ export function createProviderOnboardingRoutes(config: {
     controller.submitHospitalProfessionalDetails
   );
   router.post(
+    '/onboarding/documents/presigned-url',
+    authMiddleware,
+    controller.generateDocumentUploadUrl
+  );
+  router.post(
     '/onboarding/documents',
     authMiddleware,
     uploadDocumentsMiddleware,

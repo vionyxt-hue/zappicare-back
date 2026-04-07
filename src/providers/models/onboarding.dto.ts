@@ -8,6 +8,7 @@ import {
   DayOfWeek,
   HospitalDepartment,
 } from '../enums/provider.enum';
+import { ProviderDocumentType } from './entities/provider-document.entity';
 const nationalPhoneRegex = /^[0-9]{5,15}$/;
 
 /** Normalizes country code to +{1–4 digits}, e.g. "91" | "+91" → "+91". */
@@ -324,6 +325,19 @@ export const BankDetailsSchema = z.object({
   gstNumber: z.string().trim().optional(),
 });
 
+export const GenerateDocumentUploadUrlSchema = z.object({
+  type: z.enum(ProviderDocumentType),
+  contentType: z
+    .string()
+    .min(1, 'contentType is required')
+    .regex(
+      /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i,
+      'contentType must be a valid MIME type'
+    ),
+  fileName: z.string().trim().min(1).optional(),
+  expiresInSeconds: z.number().int().min(60).max(60 * 60 * 24).optional(),
+});
+
 export type PersonalInfoDto = z.infer<typeof PersonalInfoSchema>;
 export type AvailabilitySlotDto = z.infer<typeof AvailabilitySlotSchema>;
 export type LabProfessionalDetailsDto = z.infer<typeof LabProfessionalDetailsSchema>;
@@ -333,3 +347,4 @@ export type HospitalProfessionalDetailsDto = z.infer<typeof HospitalProfessional
 export type ProfessionalProfileDto = z.infer<typeof ProfessionalProfileSchema>;
 export type DocumentsDto = z.infer<typeof DocumentsSchema>;
 export type BankDetailsDto = z.infer<typeof BankDetailsSchema>;
+export type GenerateDocumentUploadUrlDto = z.infer<typeof GenerateDocumentUploadUrlSchema>;

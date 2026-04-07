@@ -15,11 +15,24 @@ export function createAuthMiddleware(authService: { verifyToken: AuthTokenVerifi
     next: NextFunction
   ): void {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const onboardingTokenHeader = req.headers['x-onboarding-token'];
+    const accessTokenHeader = req.headers['x-access-token'];
+
+    const bearerToken =
+      authHeader && authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7)
+        : null;
+    const onboardingToken =
+      typeof onboardingTokenHeader === 'string' ? onboardingTokenHeader.trim() : null;
+    const accessToken =
+      typeof accessTokenHeader === 'string' ? accessTokenHeader.trim() : null;
+    const token = bearerToken || onboardingToken || accessToken;
+
+    if (!token) {
       res.status(401).json(responseService.unauthorized(AuthErrorMessages.TOKEN_MISSING));
       return;
     }
-    const token = authHeader.slice(7);
+
     const payload = authService.verifyToken(token);
     if (!payload) {
       res.status(401).json(responseService.unauthorized(AuthErrorMessages.TOKEN_INVALID));
