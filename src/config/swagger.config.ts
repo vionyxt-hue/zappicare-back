@@ -665,9 +665,9 @@ export const swaggerDocument = {
     '/providers/onboarding/documents/presigned-url': {
       post: {
         tags: ['Provider Onboarding'],
-        summary: 'Generate Azure upload URL',
+        summary: 'Generate S3 upload URL',
         description:
-          'Generates a write-only Azure Blob presigned URL for document upload. Send MIME `type` from frontend (e.g. image/jpeg, application/pdf).',
+          'Generates a presigned S3 PUT URL for document upload.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -682,7 +682,7 @@ export const swaggerDocument = {
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '401': { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
           '404': { description: 'Provider not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-          '503': { description: 'Azure storage not configured', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          '503': { description: 'S3 not configured', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

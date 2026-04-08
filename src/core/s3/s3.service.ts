@@ -3,11 +3,23 @@ import {
   PutObjectCommand,
   type PutObjectCommandInput,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export interface S3UploadResult {
   url: string;
   key: string;
   bucket: string;
+}
+
+export interface S3PresignedUploadResult {
+  uploadUrl: string;
+  objectUrl: string;
+  key: string;
+  bucket: string;
+  expiresAt: string;
+  expiresInSeconds: number;
+  permission: 'put';
+  contentType: string;
 }
 
 export class S3Service {
@@ -27,21 +39,29 @@ export class S3Service {
     publicBaseUrl?: string;
   }) {
     const region = config?.region ?? process.env.AWS_REGION ?? 'us-east-1';
-    const bucket = config?.bucket ?? process.env.S3_BUCKET ?? '';
+    const bucket =
+      config?.bucket ??
+      process.env.AWS_S3_BUCKET_NAME ??
+      process.env.S3_BUCKET ??
+      '';
     this.region = region;
     this.bucket = bucket;
-    this.client = new S3Client({
-      region,
-      ...(config?.accessKeyId && config?.secretAccessKey
-        ? {
-            credentials: {
-              accessKeyId: config.accessKeyId,
-              secretAccessKey: config.secretAccessKey,
-            },
-          }
-        : {}),
-      ...(config?.endpoint ? { endpoint: config.endpoint } : {}),
-    });
+this.client = new S3Client({
+  region,
+
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
+
+  ...((config?.accessKeyId && config?.secretAccessKey) ||
+  (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    ? {
+        credentials: {
+          accessKeyId: config?.accessKeyId ?? process.env.AWS_ACCESS_KEY_ID ?? '',
+          secretAccessKey: config?.secretAccessKey ?? process.env.AWS_SECRET_ACCESS_KEY ?? '',
+        },
+      }
+    : {}),
+});
     this.publicBaseUrl =
       config?.publicBaseUrl ??
       process.env.S3_PUBLIC_BASE_URL ??
@@ -77,6 +97,37 @@ export class S3Service {
       : `${this.publicBaseUrl}/${key}`;
 
     return { url, key, bucket: this.bucket };
+  }
+
+  async generatePresignedPutUrl(params: {
+    key: string;
+    contentType: string;
+    expiresInSeconds?: number;
+  }): Promise<S3PresignedUploadResult> {
+    const expiresInSeconds = Math.max(60, Math.min(60 * 60 * 24, params.expiresInSeconds ?? 900));
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: params.key,
+      ContentType: params.contentType,
+    });
+
+    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+
+    const objectUrl = this.publicBaseUrl.endsWith('/')
+      ? `${this.publicBaseUrl}${params.key}`
+      : `${this.publicBaseUrl}/${params.key}`;
+
+    return {
+      uploadUrl,
+      objectUrl,
+      key: params.key,
+      bucket: this.bucket,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      expiresInSeconds,
+      permission: 'put',
+      contentType: params.contentType,
+    };
   }
 
   getBucket(): string {

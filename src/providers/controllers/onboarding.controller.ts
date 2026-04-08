@@ -3,7 +3,6 @@ import { ZodError } from 'zod';
 import { ProviderOnboardingService } from '../services/onboarding.service';
 import { ResponseService, ResponseCode } from '../../core/response-management';
 import { getS3Service } from '../../core/s3/s3.service';
-import { getAzureBlobService } from '../../core/azure/azure-blob.service';
 import {
   PersonalInfoSchema,
   ProfessionalProfileSchema,
@@ -335,12 +334,12 @@ export class ProviderOnboardingController {
         return;
       }
 
-      const azure = getAzureBlobService();
-      if (!azure.isConfigured()) {
+      const s3 = getS3Service();
+      if (!s3.isConfigured()) {
         res.status(503).json(
           responseService.error(
             ResponseCode.INTERNAL_SERVER_ERROR,
-            'Azure upload is not configured. Set AZURE_STORAGE_ACCOUNT_NAME, AZURE_STORAGE_ACCOUNT_KEY, AZURE_STORAGE_ENDPOINT_SUFFIX, and AZURE_STORAGE_CONTAINER_NAME.'
+            'S3 upload is not configured. Set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME.'
           )
         );
         return;
@@ -359,12 +358,12 @@ export class ProviderOnboardingController {
         : undefined;
       const extFromMime = MIME_TO_EXT[contentType];
       const safeExt = extFromFileName || extFromMime || 'bin';
-      const blobName = `providers/${providerId}/documents/${dto.type}/${Date.now()}-${Math.random()
+      const key = `providers/${providerId}/documents/${dto.type}/${Date.now()}-${Math.random()
         .toString(36)
         .slice(2, 10)}.${safeExt}`;
 
-      const result = await azure.generateWritePresignedUrl({
-        blobName,
+      const result = await s3.generatePresignedPutUrl({
+        key,
         contentType,
         expiresInSeconds: dto.expiresInSeconds,
       });
